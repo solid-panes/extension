@@ -1,0 +1,105 @@
+<!doctype html>
+<!-- The picture shown when a link to solid-panes.github.io/extension is shared (og.png, 1200 × 630).
+     node tools/og.mjs serves this folder's parent and renders this page to ../og.png. The browser
+     window on the right holds the real viewer (../json-pane.js), given the text of og-sample.json
+     the way content.js gives it a page's text, so nothing is fetched from another site. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  @font-face { font-family: 'Atkinson'; font-weight: 100 900; src: url('atkinson.woff2') format('woff2') }
+  * { box-sizing: border-box; margin: 0 }
+  body { width: 1200px; height: 630px; overflow: hidden; font-family: 'Atkinson', system-ui, sans-serif; color: #fff;
+    background:
+      radial-gradient(900px 520px at 88% 12%, rgba(47, 111, 222, .55), transparent 62%),
+      radial-gradient(700px 500px at 4% 104%, rgba(124, 77, 255, .25), transparent 60%),
+      linear-gradient(135deg, #0b1220 0%, #12203a 55%, #1a1a40 100%) }
+  .grid { position: absolute; inset: 0; opacity: .18;
+    background-image: linear-gradient(rgba(255,255,255,.09) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.09) 1px, transparent 1px);
+    background-size: 48px 48px; mask-image: radial-gradient(900px 500px at 70% 40%, #000, transparent 75%) }
+  .left { position: absolute; left: 64px; top: 60px; width: 450px }
+  .brand { display: flex; align-items: center; gap: 18px }
+  .brand img { width: 92px; height: 85px; flex: none; filter: drop-shadow(0 10px 30px rgba(47, 111, 222, .65)) }
+  .brand b { font-size: 50px; font-weight: 800; letter-spacing: -.03em; line-height: 1 }
+  .pill { display: inline-block; margin-top: 26px; font-size: 26px; font-weight: 700; padding: 6px 20px; border-radius: 999px; background: #2f6fde; letter-spacing: .02em }
+  h1 { margin-top: 20px; font-size: 48px; font-weight: 700; line-height: 1.1; letter-spacing: -.02em }
+  h1 em { font-style: normal; color: #8fc1ff }
+  p { margin-top: 18px; font-size: 26px; line-height: 1.35; color: #c3cde0; max-width: 430px }
+  .tags { position: absolute; left: 64px; bottom: 50px; width: 450px; display: flex; flex-wrap: wrap; gap: 12px }
+  .tags span { font-size: 20px; font-weight: 600; padding: 8px 18px; border-radius: 999px; background: rgba(255,255,255,.09); border: 1px solid rgba(255,255,255,.16); color: #dbe3f3; white-space: nowrap }
+  .win { position: absolute; left: 540px; top: 58px; width: 620px; height: 560px; border-radius: 22px; overflow: hidden;
+    background: #fff; box-shadow: 0 40px 90px rgba(3, 6, 20, .65), 0 0 0 1px rgba(255,255,255,.14); transform: rotate(-1.6deg) }
+  .bar { height: 60px; background: #1d293d; display: flex; align-items: center; gap: 14px; padding: 0 18px }
+  .dots { display: flex; gap: 8px; flex: none }
+  .dots i { width: 13px; height: 13px; border-radius: 50%; background: #ff6058 }
+  .dots i:nth-child(2) { background: #ffbd2e }
+  .dots i:nth-child(3) { background: #28c940 }
+  .addr { flex: 1; min-width: 0; height: 40px; border-radius: 999px; background: #fff; display: flex; align-items: center; padding: 0 16px; gap: 10px; box-shadow: 0 0 0 3px #7fa8f0 }
+  .addr svg { width: 17px; height: 17px; flex: none }
+  .addr span { flex: 1; color: #62748e; font-size: 19px; white-space: nowrap; overflow: hidden }
+  .addr span b { color: #0f172b; font-weight: 700 }
+  .addr span em { font-style: normal; color: #2f6fde; font-weight: 800 }
+  .bar > img { width: 34px; height: 34px; flex: none; border-radius: 8px }
+  #pane { zoom: .78; height: 642px; overflow: hidden }
+  /* the Viewer / Raw switch, as content.js draws it */
+  .switch { position: absolute; right: 16px; bottom: 16px; display: flex; gap: 2px; padding: 3px; border-radius: 12px; background: #eef0f4;
+    box-shadow: 0 2px 10px rgba(20,30,60,.28); font: 700 15px/1 'Atkinson', system-ui, sans-serif }
+  .switch span { height: 36px; min-width: 70px; padding: 0 14px; border-radius: 9px; color: #4a5366; display: flex; align-items: center; justify-content: center }
+  .switch span.on { background: #fff; color: #141a29; box-shadow: 0 1px 2px rgba(20,30,60,.12) }
+</style>
+</head>
+<body>
+  <div class="grid"></div>
+  <div class="left">
+    <div class="brand"><img src="og-emblem.svg" alt=""><b>Solid JSON Viewer</b></div>
+    <div class="pill">a browser extension</div>
+    <h1>JSON pages,<br><em>easy to read</em></h1>
+    <p>Tree, table and raw text, on any JSON link you open.</p>
+  </div>
+  <div class="tags"><span>no network requests</span><span>one permission</span><span>JSON-LD aware</span></div>
+  <div class="win">
+    <div class="bar">
+      <div class="dots"><i></i><i></i><i></i></div>
+      <div class="addr">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#62748e" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+        <span><b>api.example.org</b>/<em>panes.json</em></span>
+      </div>
+      <img src="../icons/icon-128.png" alt="">
+    </div>
+    <div id="pane"></div>
+    <div class="switch"><span class="on">Viewer</span><span>Raw</span></div>
+  </div>
+<script type="module">
+  // the viewer, given what content.js gives it: the text, its type and the address, and no fetch
+  const pane = (await import('../json-pane.js')).default
+  const text = await (await fetch('og-sample.json')).text() // same folder; in the extension this is the page's own text
+  const url = 'https://api.example.org/panes.json'
+  const context = { dom: document, shadow: true, source: { text, contentType: 'application/json', url }, imagePreviews: false, session: { store: null } }
+  const host = pane.render({ uri: url, doc () { return this } }, context)
+  document.getElementById('pane').appendChild(host)
+  const root = host.shadowRoot || host
+  const jv = () => root.querySelector('.jv') || (host.classList && host.classList.contains('jv') ? host : null)
+  const wait = () => new Promise(r => setTimeout(r, 50))
+  while (!(jv() && jv().classList.contains('jv-ready'))) await wait()
+  const view = jv()
+  const top = (k) => [...view.querySelectorAll('.jv-tree > .jv-item > .jv-row .jv-key')].find(e => e.textContent === k)
+  // fold the long top-level entries so the window shows the shape of the file
+  for (const k of ['maintainer', 'stats', 'tags', 'releases', 'matrix', 'empty', 'odd keys']) {
+    const key = top(k)
+    if (key && key.closest('.jv-item').getAttribute('aria-expanded') === 'true') key.click()
+  }
+  for (const k of ['description', 'version']) {
+    const key = top(k)
+    if (key) key.closest('.jv-item').hidden = true
+  }
+  const items = [...view.querySelectorAll('.jv-tree .jv-item[aria-level="2"]')].filter(e => e.closest('.jv-item[aria-level="1"]').querySelector('.jv-key').textContent === 'panes')
+  for (const it of items.slice(1)) if (it.getAttribute('aria-expanded') === 'true') it.firstChild.click()
+  for (const sel of ['.jv-head', '.jv-schema', '.jv-pathbar']) { const e = view.querySelector(sel); if (e) e.hidden = true }
+  const bar = view.querySelector('.jv-bar')
+  if (bar) { bar.style.position = 'static'; bar.style.borderTop = '0' }
+  if (document.activeElement) document.activeElement.blur()
+  for (const e of document.querySelectorAll('#pane, .win, body')) e.scrollTop = 0
+  document.body.classList.add('ready')
+</script>
+</body>
+</html>

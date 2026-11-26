@@ -2,6 +2,8 @@
 
 Opens JSON and JSON-LD responses in a viewer: a lazy tree, a sortable table, numbered raw text, search, a JSONPath box, a schema panel, exact big numbers, and JSON-LD `@type` badges and `@id` links. A **Viewer / Raw** switch in the bottom right corner goes back to the page as the browser showed it.
 
+Landing page: **https://solid-panes.github.io/extension/**
+
 The viewer is [json-pane.js](https://solid-panes.github.io/json/), the same file the SolidOS data browser loads, copied in unchanged. A few lines in `content.js` give it the page's text instead of letting it fetch.
 
 ## Privacy
@@ -15,11 +17,13 @@ The viewer is [json-pane.js](https://solid-panes.github.io/json/), the same file
 
 ## Install (unpacked)
 
+Not in the Chrome or Firefox stores yet. Get the folder first: `git clone https://github.com/solid-panes/extension`, or download and unzip https://github.com/solid-panes/extension/archive/refs/heads/gh-pages.zip.
+
 ### Chrome, Edge, Brave and other Chromium browsers
 
 1. Open `chrome://extensions` (Edge: `edge://extensions`, Brave: `brave://extensions`).
 2. Turn on **Developer mode**.
-3. Click **Load unpacked** and choose this folder: `/home/melvin/scratch/2026-11-26-json-ext`.
+3. Click **Load unpacked** and choose that folder (the one with `manifest.json` in it).
 4. To view local files, open the extension's **Details** and turn on **Allow access to file URLs**.
 
 ### Firefox 140 or later
@@ -56,6 +60,8 @@ Right-click the toolbar icon (or open the extension's details) and choose **Opti
 | `json-pane.js` | The pane, copied unchanged by `node tools/copy-pane.mjs [path]` |
 | `options.html`, `options.js`, `options.css` | The options page |
 | `icons/` | `icon.svg` and the PNGs drawn from it by `node tools/make-icons.mjs` |
+
+Not part of the extension (nothing in `manifest.json` refers to them; leave them out of a store package): `index.html` and `og.png` (the landing page and its share picture, served by GitHub Pages), `.nojekyll`, and the rest of `tools/` (`og.html`, `og.mjs`, `og-sample.json`, `og-emblem.svg`, `atkinson.woff2`; `node tools/og.mjs` redraws `og.png`).
 
 ## Not done yet
 

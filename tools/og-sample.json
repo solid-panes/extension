@@ -1,0 +1,90 @@
+{
+  "name": "Solid panes catalogue",
+  "version": "0.0.3",
+  "updated": "2026-11-24T09:30:00Z",
+  "homepage": "https://solid-panes.github.io/",
+  "description": "A small, made-up catalogue of SolidOS panes, written to show what the JSON viewer does: nested objects, arrays of objects that open as a table, dates, colours, links, pictures, e-mail addresses and a Unix time. Every pane here is one JavaScript file that the data browser loads by link, with no build step and no release, and every one of them only reads your data unless it says otherwise.",
+  "maintainer": {
+    "name": "Example Maintainer",
+    "email": "maintainer@example.org",
+    "since": "2026-01-15"
+  },
+  "theme": {
+    "accent": "#2f6fde",
+    "accentSoft": "#eaf1fd",
+    "ok": "#1f9d55",
+    "warning": "rgb(214, 120, 24)",
+    "danger": "hsl(0, 70%, 52%)"
+  },
+  "stats": {
+    "panes": 4,
+    "downloads": 12873,
+    "rating": 4.6,
+    "lastBuild": 1795510800,
+    "experimental": false,
+    "sponsor": null
+  },
+  "tags": ["solid", "panes", "viewer", "read-only"],
+  "panes": [
+    {
+      "name": "notes",
+      "label": "Notes",
+      "file": "notes-pane.js",
+      "opens": [".md"],
+      "licence": "MIT",
+      "released": "2026-10-02",
+      "colour": "#2f6fde",
+      "icon": "images/notes.svg",
+      "stars": 42,
+      "writes": false,
+      "repo": "https://github.com/solid-panes/notes"
+    },
+    {
+      "name": "chess",
+      "label": "Chess",
+      "file": "chess-pane.js",
+      "opens": ["chess:ChessGame"],
+      "licence": "GPL-3.0",
+      "released": "2026-09-18",
+      "colour": "#b5835a",
+      "icon": "images/chess.svg",
+      "stars": 57,
+      "writes": true,
+      "repo": "https://github.com/solid-panes/chess"
+    },
+    {
+      "name": "media",
+      "label": "Media",
+      "file": "media-pane.js",
+      "opens": [".mp4", ".webm", ".mp3", ".ogg", ".png", ".svg"],
+      "licence": "AGPL-3.0-or-later",
+      "released": "2026-11-25",
+      "colour": "#7c4dff",
+      "icon": "images/media.svg",
+      "stars": 18,
+      "writes": false,
+      "repo": "https://github.com/solid-panes/media"
+    },
+    {
+      "name": "json-viewer",
+      "label": "JSON",
+      "file": "json-pane.js",
+      "opens": [".json", ".jsonld"],
+      "licence": "AGPL-3.0-or-later",
+      "released": "2026-11-26",
+      "colour": "#1f9d55",
+      "icon": "images/swatch.png",
+      "stars": 0,
+      "writes": false,
+      "repo": "https://github.com/solid-panes/json"
+    }
+  ],
+  "releases": [
+    { "version": "0.0.1", "date": "2026-09-18T12:00:00Z", "panes": 2, "notes": "First two panes." },
+    { "version": "0.0.2", "date": "2026-10-02T08:15:00Z", "panes": 3, "notes": "Notes reader." },
+    { "version": "0.0.3", "date": "2026-11-24T09:30:00Z", "panes": 4, "notes": "Media player and the JSON viewer." }
+  ],
+  "matrix": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+  "empty": { "list": [], "object": {} },
+  "odd keys": { "@context": "not JSON-LD here", "with space": "yes", "it's": "quoted" }
+}

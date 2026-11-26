@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Solid JSON Viewer · a browser extension for JSON and JSON-LD</title>
+<meta name="description" content="A browser extension that shows JSON and JSON-LD pages as a tree, a table or raw text. No network requests, no data collected. One permission: storage.">
+<link rel="canonical" href="https://solid-panes.github.io/extension/">
+<link rel="icon" type="image/png" href="icons/icon-32.png">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="solid-panes">
+<meta property="og:title" content="Solid JSON Viewer · a browser extension for JSON and JSON-LD">
+<meta property="og:description" content="A browser extension that shows JSON and JSON-LD pages as a tree, a table or raw text. No network requests, no data collected. One permission: storage.">
+<meta property="og:url" content="https://solid-panes.github.io/extension/">
+<meta property="og:image" content="https://solid-panes.github.io/extension/og.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="A browser window at api.example.org/panes.json showing the JSON as a tree with type colours, counts, a date chip and colour swatches, and a Viewer / Raw switch">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Solid JSON Viewer · a browser extension for JSON and JSON-LD">
+<meta name="twitter:description" content="Shows JSON and JSON-LD pages as a tree, a table or raw text. No network requests, no data collected. One permission: storage.">
+<meta name="twitter:image" content="https://solid-panes.github.io/extension/og.png">
+<meta name="twitter:image:alt" content="A browser window at api.example.org/panes.json showing the JSON as a tree, with a Viewer / Raw switch">
+<style>
+  body { margin: 0; background: #f8f9fb; color: #1d1d1f; font: 17px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif }
+  main { max-width: 680px; margin: 0 auto; padding: 56px max(20px, env(safe-area-inset-left, 0px)) 96px }
+  .brand { display: flex; align-items: center; gap: 14px; margin: 0 0 8px }
+  .brand img { width: 56px; height: 56px; flex: none }
+  h1 { font-size: 40px; line-height: 1.1; letter-spacing: -.02em; margin: 0 }
+  h2 { font-size: 21px; margin: 30px 0 6px }
+  p { margin: 0 0 18px; color: #3a3a3c }
+  .shot { display: block; width: 100%; height: auto; border-radius: 14px; margin: 22px 0 6px; box-shadow: 0 8px 28px rgba(20, 30, 60, .16) }
+  .privacy { background: #eaf1fd; color: #1d2b4a; border-radius: 12px; padding: 12px 16px; font-weight: 600 }
+  .note { background: #fff; box-shadow: inset 0 0 0 1px #e6e8ee; border-radius: 12px; padding: 12px 16px }
+  ol { margin: 0 0 18px; padding-left: 24px; color: #3a3a3c }
+  ol li { padding: 4px 0 }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 18px }
+  .go { display: inline-block; background: #2f6fde; color: #fff; font-weight: 700; text-decoration: none; padding: 8px 18px; border-radius: 999px; font-size: 15px }
+  .go.alt { background: #fff; color: #1f55b8; box-shadow: inset 0 0 0 1.5px #a9c4f5 }
+  code { background: #eef0f4; padding: 2px 6px; border-radius: 6px; font-size: 15px; overflow-wrap: anywhere }
+  a { color: #1f55b8; overflow-wrap: anywhere }
+  @media (max-width: 480px) { h1 { font-size: 32px } .brand img { width: 46px; height: 46px } main { padding-top: 36px } }
+</style>
+</head>
+<body>
+<main>
+  <div class="brand"><img src="icons/icon-128.png" alt="" width="56" height="56"><h1>Solid JSON Viewer</h1></div>
+  <p>A browser extension that shows JSON and JSON-LD pages as a tree, a table or raw text.</p>
+  <img class="shot" src="og.png" width="1200" height="630" alt="A browser window at api.example.org/panes.json showing the JSON as a tree with type colours, counts, a date chip and colour swatches, and a Viewer / Raw switch">
+  <h2>Privacy</h2>
+  <p class="privacy">No network requests, no data collected. One permission: storage.</p>
+
+  <h2>Install</h2>
+  <p class="note">Not in the Chrome or Firefox stores yet. For now it is loaded from a folder.</p>
+  <p>Get the folder first: clone the repository, or download the zip and unpack it.</p>
+  <div class="row">
+    <a class="go" href="https://github.com/solid-panes/extension/archive/refs/heads/gh-pages.zip">Download zip</a>
+    <a class="go alt" href="https://github.com/solid-panes/extension">Source on GitHub</a>
+  </div>
+
+  <h2>Chrome, Edge, Brave</h2>
+  <ol>
+    <li>Open <code>chrome://extensions</code> (Edge: <code>edge://extensions</code>, Brave: <code>brave://extensions</code>).</li>
+    <li>Turn on <b>Developer mode</b>.</li>
+    <li>Click <b>Load unpacked</b> and choose the folder, the one with <code>manifest.json</code> in it.</li>
+    <li>To view local files, open the extension's <b>Details</b> and turn on <b>Allow access to file URLs</b>.</li>
+  </ol>
+
+  <h2>Firefox 140 or later</h2>
+  <ol>
+    <li>Open <code>about:config</code> and set <code>devtools.jsonview.enabled</code> to <code>false</code>. Otherwise Firefox's own JSON viewer takes the page first.</li>
+    <li>Open <code>about:debugging#/runtime/this-firefox</code>, click <b>Load Temporary Add-on…</b> and choose <code>manifest.json</code> in the folder. A temporary add-on is removed when Firefox restarts.</li>
+    <li>If JSON pages are not taken over, open the add-on's <b>Permissions</b> tab in <code>about:addons</code> and allow it on all sites.</li>
+  </ol>
+
+  <h2>Where it comes from</h2>
+  <p>The viewer is the <a href="https://solid-panes.github.io/json/">JSON pane</a> for the SolidOS data browser, the same file, unchanged. The extension gives it the text of the page you opened.</p>
+  <p>Source and details: <a href="https://github.com/solid-panes/extension">github.com/solid-panes/extension</a> · AGPL-3.0-or-later · Melvin Carvalho</p>
+</main>
+</body>
+</html>
