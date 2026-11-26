@@ -1,6 +1,6 @@
-# Solid JSON Viewer (browser extension) 0.0.1
+# Solid JSON Viewer (browser extension) 0.0.2
 
-Opens JSON and JSON-LD responses in a viewer: a lazy tree, a sortable table, numbered raw text, search, a JSONPath box, a schema panel, exact big numbers, and JSON-LD `@type` badges and `@id` links. A **Viewer / Raw** switch in the bottom right corner goes back to the page as the browser showed it.
+Opens JSON, JSON-LD and JSON Lines responses in a viewer: a lazy tree, a sortable table, numbered raw text, search, a JSONPath box, a schema panel, exact big numbers, Level 1–4, breadcrumbs, and JSON-LD `@type` badges and `@id` links. A **Viewer / Raw** switch in the bottom right corner goes back to the page as the browser showed it.
 
 Landing page: **https://solid-panes.github.io/extension/**
 
@@ -42,7 +42,8 @@ Right-click the toolbar icon (or open the extension's details) and choose **Opti
 ## What it opens
 
 - Any response whose `Content-Type` is `application/json` or ends in `+json` (`application/ld+json`, `application/activity+json`, …), using JSONView's test `^application/([\w!#$&.\-^+]+\+)?json($|;)`.
-- `text/plain` responses whose body is a single `<pre>` holding valid JSON (JSON Formatter's test, plus a parse).
+- `text/plain` responses whose body is a single `<pre>` holding valid JSON (JSON Formatter's test, plus a parse), or JSON Lines: several lines, each of which parses on its own.
+- JSON Lines responses: `application/jsonl`, `application/x-ndjson`, `application/ndjson`, `application/json-seq`, `application/x-jsonlines`, where the browser shows them as a page (Chromium downloads content types it does not know, and a download never reaches an extension). A JSON Lines file served as `application/json` is taken over like any JSON page, and the viewer reads it line by line; there a line that does not parse is an error row in place.
 - Nothing else. HTML pages, and text files that are not JSON, are left alone. An invalid JSON response gets an error card with the line and column.
 
 ## How it works
@@ -62,6 +63,19 @@ Right-click the toolbar icon (or open the extension's details) and choose **Opti
 | `icons/` | `icon.svg` and the PNGs drawn from it by `node tools/make-icons.mjs` |
 
 Not part of the extension (nothing in `manifest.json` refers to them; leave them out of a store package): `index.html` and `og.png` (the landing page and its share picture, served by GitHub Pages), `.nojekyll`, and the rest of `tools/` (`og.html`, `og.mjs`, `og-sample.json`, `og-emblem.svg`, `atkinson.woff2`; `node tools/og.mjs` redraws `og.png`).
+
+## Changes
+
+### 0.0.2
+
+- JSON Lines / NDJSON: taken over by content type, or as `text/plain` when every line parses; shown as an array of records, with the table across records and the raw lines numbered. In a file served as JSON or JSON Lines, a bad line is an error row (`line 17: …`) and the header counts them (`12 lines · 1 error`).
+- From the pane: **Level 1–4** (open the tree to a depth; <kbd>Alt</kbd>+<kbd>1</kbd> … <kbd>4</kbd> where the browser does not keep those keys for its tabs), **breadcrumbs** for the selected row (`$ › panes › 0 › name`, each one a jump), an empty `@id` shown as `""` · this document, and `id` / `type` and id-typed terms recognised for ActivityStreams, schema.org, security, DID and credentials contexts by their URL (nothing is fetched).
+- Fixed, from the pane: the first click on a row could land on another row, because the path bar appeared under the pointer; a JSONPath such as `$.items[*].name` stopped after one result once a step reached 5,000 nodes.
+- Permissions unchanged: `storage` only.
+
+### 0.0.1
+
+- First version: JSON and JSON-LD pages, Viewer / Raw switch, options.
 
 ## Not done yet
 

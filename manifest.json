@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "Solid JSON Viewer",
   "short_name": "JSON Viewer",
-  "version": "0.0.1",
-  "description": "Shows JSON and JSON-LD responses as a tree, a table and raw text. No network requests, no data collected.",
+  "version": "0.0.2",
+  "description": "Shows JSON, JSON-LD and JSON Lines responses as a tree, a table and raw text. No network requests, no data collected.",
   "author": "Melvin Carvalho",
   "homepage_url": "https://solid-panes.github.io/json/",
   "icons": {

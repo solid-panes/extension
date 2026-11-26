@@ -2,14 +2,16 @@
 // Copyright (c) 2026 Melvin Carvalho
 //
 // content.js — runs at document_start on every page and does nothing unless the page is a JSON
-// response. Then it takes the text the browser already has (no second request), clears the page
+// or JSON Lines response. Then it takes the text the browser already has (no second request), clears the page
 // and draws json-pane.js (the same file as the SolidOS pane, unchanged) in its place, with a
 // Viewer / Raw toggle. It makes no network requests and sends nothing anywhere.
 (() => {
   // JSONView's content-type test: application/json and any +json (ld+json, activity+json, ...)
   const RE_JSON_TYPE = /^application\/([\w!#$&.\-^+]+\+)?json($|;)/i
+  // JSON Lines / NDJSON, where the browser shows such a response as text at all
+  const RE_LINES_TYPE = /^application\/(jsonl|x-ndjson|ndjson|json-seq|x-jsonlines|jsonlines)($|;)/i
   const type = String(document.contentType || '')
-  const jsonType = RE_JSON_TYPE.test(type)
+  const jsonType = RE_JSON_TYPE.test(type) || RE_LINES_TYPE.test(type)
   const plainType = /^text\/plain($|;)/i.test(type)
   if (!jsonType && !plainType) return
   if (window.top !== window && !jsonType) return // a framed text file: leave it alone
@@ -47,10 +49,10 @@
     if (!opts.enabled || !pre) return show()
     const text = pre.textContent
     if (text.length > Math.max(0.1, Number(opts.maxMB) || 50) * 1048576) return show()
-    if (plainType) { // text/plain: only a body that is really JSON
+    if (plainType) { // text/plain: only a body that is really JSON, or JSON Lines
       const c = text.trimStart()[0]
       if (c !== '{' && c !== '[') return show()
-      try { JSON.parse(text) } catch (e) { return show() }
+      try { JSON.parse(text) } catch (e) { if (!isLines(text)) return show() }
     }
     const { default: pane } = await import(api.runtime.getURL('json-pane.js'))
 
@@ -75,6 +77,18 @@
     document.body.append(bar, view, raw)
     show()
   })().catch(e => { show(); console.warn('JSON viewer:', e) })
+
+  // JSON Lines in a text/plain page: several lines, and every one that is not blank parses on its
+  // own. (A page served as JSON or JSON Lines needs no such test: the pane shows a bad line in place.)
+  function isLines (text) {
+    let n = 0
+    for (const line of text.split('\n')) {
+      if (!/\S/.test(line)) continue
+      try { JSON.parse(line) } catch (e) { return false }
+      n++
+    }
+    return n >= 2
+  }
 
   // A small fixed Viewer / Raw switch, in its own shadow root
   function toggle (onChange) {

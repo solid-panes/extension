@@ -3,7 +3,8 @@
 //
 // json-pane.js — a JSON and JSON-LD viewer for the SolidOS data browser, read-only.
 // Opens .json and .jsonld files (or anything the store knows is application/json or
-// application/ld+json). Fetches the file once as text with a short Accept header, parses it once,
+// application/ld+json), and JSON Lines (.jsonl, .ndjson): one record a line, shown as an array of
+// records, where a line that does not parse is an error row in place, not the end of the file. Fetches the file once as text with a short Accept header, parses it once,
 // and shows it as:
 //   - a Tree: collapsible and lazy (children are built when a node opens, and big arrays and
 //     objects are split into ranges of 100), with type colours, counts, indent guides, previews
@@ -11,6 +12,8 @@
 //     and ARIA tree keyboard navigation;
 //   - a Table of any array of objects, sortable, 200 rows a page;
 //   - the Raw text, numbered and coloured, pretty-printed or as it came.
+// Level 1-4 opens the tree to that depth and closes anything deeper; the selected row's path is a
+// row of crumbs, each a jump to that ancestor.
 // One search box finds keys and values (highlight, next/previous, count, a Filter that hides
 // branches without matches), and when it starts with $ it runs a JSONPath query instead.
 // A Schema panel lists the inferred type of every path. JSON-LD gets a light touch: @type values
@@ -52,6 +55,8 @@ const LIMITS = {
   autoRows: 260, // rows opened on first view
   filterRows: 1500, // rows opened when the filter is on
   expandAll: 3000, // rows Expand all will open
+  levelRows: 3000, // rows a Level button will show
+  errText: 160, // characters of a bad line shown in its error row
   matches: 10000, // search matches kept for next / previous
   results: 100, // path query results shown at a time
   tablePage: 200, // table rows a page
@@ -83,6 +88,7 @@ const CSS = `
 .jv-pill.jv-fmt-ld { background: #f1eafd; color: #6633b0 }
 .jv-pill.jv-pill-big { background: #fdf0e6; color: #9a4609 }
 .jv-pill.jv-pill-ld { background: #f1eafd; color: #6633b0 }
+.jv-pill.jv-pill-err { background: #fdecec; color: #9f1f1f }
 
 .jv-bar { position: sticky; top: 0; z-index: 4; display: flex; flex-direction: column; gap: 8px; padding: 10px 20px; background: #fff;
   border-top: 1px solid var(--jv-line); border-bottom: 1px solid var(--jv-line); backdrop-filter: saturate(1.4) blur(8px); -webkit-backdrop-filter: saturate(1.4) blur(8px) }
@@ -97,6 +103,15 @@ const CSS = `
 .jv-btn.jv-sq { padding: 0; width: 44px }
 .jv button:focus-visible, .jv a:focus-visible, .jv select:focus-visible, .jv summary:focus-visible { outline: 2.5px solid var(--jv-accent); outline-offset: 2px }
 
+.jv-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px }
+.jv-levels { display: inline-flex; align-items: stretch; height: 44px; border: 1px solid #d8dce5; border-radius: 11px; background: #fff; overflow: hidden }
+.jv-levlab { display: flex; align-items: center; padding: 0 4px 0 12px; color: #4a5366; font-size: 13px; font-weight: 600; user-select: none; -webkit-user-select: none }
+.jv-lev { width: 44px; min-width: 44px; height: 100%; padding: 0; border: 0; background: transparent; color: #2a3243; font-size: 14px; font-weight: 600; cursor: pointer; font-variant-numeric: tabular-nums; transition: background .12s }
+.jv-lev + .jv-lev { box-shadow: inset 1px 0 0 #e5e8ee }
+.jv-lev:hover { background: var(--jv-soft) }
+.jv-lev[aria-pressed="true"] { background: var(--jv-accent-soft); color: var(--jv-accent-ink) }
+.jv-lev:disabled { opacity: .45; cursor: default; background: transparent }
+.jv .jv-lev:focus-visible, .jv .jv-crumb:focus-visible { outline-offset: -3px }
 .jv-tabs { display: inline-flex; gap: 2px; padding: 3px; border-radius: 13px; background: #eef0f4 }
 .jv-tab { height: 38px; min-width: 64px; padding: 0 16px; border: 0; border-radius: 10px; background: transparent; color: #4a5366; font-size: 14px; font-weight: 600; cursor: pointer }
 .jv-tab:hover { color: #1b2230 }
@@ -115,8 +130,15 @@ const CSS = `
 .jv-clear:hover { background: #f0f2f6; color: #1b2230 }
 
 .jv-pathbar { display: flex; align-items: center; gap: 8px; min-height: 44px }
-.jv-pathbar code { flex: 1 1 auto; min-width: 0; padding: 0 2px; font: 13px/1.4 ${MONO}; color: #3a4357; overflow-wrap: anywhere }
-.jv-pathbar code b { font-weight: 600; color: var(--jv-key) }
+.jv-pathbar code { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; font: 13px/1.4 ${MONO}; color: #3a4357; white-space: nowrap;
+  overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none }
+.jv-pathbar code::-webkit-scrollbar { display: none }
+.jv-crumb { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; min-width: 44px; height: 44px; padding: 0 7px; border: 0; border-radius: 9px; background: none; color: #3a4357; cursor: pointer; white-space: nowrap }
+.jv-crumb + .jv-crumb::before { content: '›'; margin-right: 9px; color: #a3aab7; font-weight: 400 }
+.jv-crumb:hover { background: var(--jv-soft); color: var(--jv-accent-ink) }
+.jv-crumb[aria-current] { font-weight: 600; color: var(--jv-key) }
+.jv-cx { display: none }
+.jv-crange { flex: 0 0 auto; padding: 0 8px; color: var(--jv-muted) }
 .jv-pathbar .jv-btn { height: 40px; font-size: 13px; padding: 0 12px }
 
 .jv-trail { display: flex; align-items: center; gap: 8px; min-height: 44px }
@@ -142,6 +164,7 @@ const CSS = `
 .jv-stype.t-boolean { background: #f3ecfd; color: #6a35b0 }
 .jv-stype.t-null { background: #f0f2f6; color: #6f7889 }
 .jv-stype.t-object, .jv-stype.t-array { background: #eaf1fd; color: #1f55b8 }
+.jv-stype.t-error { background: #fdecec; color: #9f1f1f }
 .jv-snote { padding: 8px 14px; color: var(--jv-muted); font-size: 13px }
 
 .jv-view { padding: 10px 20px 0 }
@@ -167,6 +190,11 @@ const CSS = `
 .jv-boolean { color: var(--jv-bool); font-weight: 550 }
 .jv-null { color: var(--jv-null); font-style: italic }
 .jv-empty { color: #8f97a7 }
+.jv-errrow > .jv-row, .jv-errrow > .jv-row:hover { background: #fef5f5; box-shadow: inset 3px 0 0 #d64545 }
+.jv-lerr-msg { color: #a3262a; font-weight: 600 }
+.jv-lerr-text { display: block; margin-top: 2px; color: #6b5560; white-space: pre-wrap; overflow-wrap: anywhere }
+.jv-table td.jv-errcell { white-space: normal; background: #fef5f5; box-shadow: inset 3px 0 0 #d64545 }
+.jv-table td.jv-errcell .jv-lerr { position: sticky; left: 12px; display: block; width: max-content; max-width: min(860px, calc(100vw - 110px)) } /* stays in view when the table scrolls sideways */
 .jv-link { color: var(--jv-accent-ink); text-decoration: underline; text-decoration-color: rgba(31, 85, 184, .35); text-underline-offset: 2px }
 .jv-link:hover { text-decoration-color: currentColor }
 .jv-count-chip { display: inline-block; margin-left: 2px; padding: 0 8px; border-radius: 999px; background: #f0f2f6; color: #5f687a; font: 600 11.5px/20px ${SANS}; white-space: nowrap; vertical-align: 1px; font-variant-numeric: tabular-nums }
@@ -284,8 +312,8 @@ mark.jv-mark { background: var(--jv-hit); color: inherit; border-radius: 3px; bo
 .jv-loc { display: inline-flex; align-items: center; height: 28px; padding: 0 12px; border-radius: 999px; background: #fdecec; color: #9f1f1f; font-weight: 700; font-size: 13px; font-variant-numeric: tabular-nums }
 .jv-snip { margin: 12px 0 14px; padding: 8px 0; border: 1px solid var(--jv-line); border-radius: 10px; background: #fbfcfd; font: 13px/1.6 ${MONO}; overflow-x: auto }
 .jv-snip .jv-code { white-space: pre; overflow-wrap: normal }
-.jv-snip .jv-ln.jv-errline { background: #fdecec }
-.jv-snip .jv-ln.jv-errline .jv-no { color: #c24a4a; font-weight: 700 }
+.jv-ln.jv-errline, .jv-ln.jv-errline:hover { background: #fdecec }
+.jv-ln.jv-errline .jv-no { color: #c24a4a; font-weight: 700 }
 .jv-caret { color: #d64545; font-weight: 700 }
 .jv-loading { display: flex; align-items: center; gap: 12px; color: var(--jv-muted) }
 .jv-spin { width: 18px; height: 18px; border-radius: 50%; border: 2.5px solid #d8e2f5; border-top-color: var(--jv-accent); animation: jv-spin .8s linear infinite }
@@ -301,6 +329,8 @@ mark.jv-mark { background: var(--jv-hit); color: inherit; border-radius: 3px; bo
   .jv-btn.jv-narrow-sq { padding: 0; width: 44px }
   .jv-btn.jv-narrow-sq .jv-txt { display: none }
   .jv-tab { min-width: 0; padding: 0 12px }
+  .jv-tools { gap: 6px }
+  .jv-levlab { padding: 0 2px 0 9px; font-size: 12px }
   .jv-schema { margin: 10px 12px 0 }
   .jv-view { padding: 8px 12px 0 }
   .jv-group { margin-left: 10px; padding-left: 6px }
@@ -398,16 +428,26 @@ function logoSvg (doc, size) {
 
 // A number whose source text a JavaScript number cannot hold exactly. It behaves as a number
 // (typeOf says 'number', arithmetic uses the nearest double) and prints as its source.
-class BigNum {
-  constructor (src, num) { this.src = src; this.num = num }
+class Atom {}
+class BigNum extends Atom {
+  constructor (src, num) { super(); this.src = src; this.num = num }
   toString () { return this.src }
   valueOf () { return this.num }
   toJSON () { return HAS_RAW_JSON ? JSON.rawJSON(this.src) : BIG_MARK + this.src }
 }
+BigNum.prototype.kind = 'number'
+// A line of a JSON Lines file that does not parse: it stays in its place among the records
+class LineError extends Atom {
+  constructor (line, message, text, col) { super(); this.line = line; this.message = message; this.text = text; this.col = col }
+  toString () { return 'line ' + this.line + ': ' + this.message + ' ' + this.text }
+  toJSON () { return { error: this.message, line: this.line, text: this.text } }
+}
+LineError.prototype.kind = 'error'
 const isBig = v => v instanceof BigNum
-const typeOf = v => v === null ? 'null' : Array.isArray(v) ? 'array' : v instanceof BigNum ? 'number' : typeof v
-const isBranch = v => v !== null && typeof v === 'object' && !(v instanceof BigNum)
-const isPlainObject = v => v !== null && typeof v === 'object' && !Array.isArray(v) && !(v instanceof BigNum)
+const isErr = v => v instanceof LineError
+const typeOf = v => v === null ? 'null' : Array.isArray(v) ? 'array' : v instanceof Atom ? v.kind : typeof v
+const isBranch = v => v !== null && typeof v === 'object' && !(v instanceof Atom)
+const isPlainObject = v => v !== null && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Atom)
 const fmt = n => n.toLocaleString('en')
 const plural = (n, one, many) => fmt(n) + ' ' + (n === 1 ? one : many)
 function countLabel (v, n) {
@@ -628,6 +668,48 @@ function parseJSON (text) {
   }
 }
 
+// JSON Lines (NDJSON): one JSON value a line. The file becomes an array of records; blank lines
+// are skipped, and a line that does not parse becomes a LineError in its place. With sniff (a
+// file that was not announced as JSON Lines and failed as JSON), it only counts when the first
+// line is a whole object or array and at least two lines, and half of them, parse.
+const RE_NONBLANK = /\S/
+function parseLines (text, sniff) {
+  const t0 = performance.now()
+  const maybeBig = RE_MAYBE_BIG.test(text)
+  const n = text.length
+  const data = []
+  const lineNos = [] // the line each record came from, from 1
+  let errors = 0
+  let bigs = 0
+  let line = 0
+  let pos = 0
+  for (;;) {
+    let end = text.indexOf('\n', pos)
+    if (end === -1) end = n
+    line++
+    let s = text.slice(pos, end)
+    pos = end + 1
+    if (s.charCodeAt(0) === 0x1e) s = s.slice(1) // application/json-seq: a record separator before each record
+    if (RE_NONBLANK.test(s)) {
+      if (sniff && !data.length) { const c = s.trimStart()[0]; if (c !== '{' && c !== '[') return null }
+      try {
+        if (maybeBig) { const r = parseExact(s); bigs += r.bigs; data.push(r.data) } else data.push(JSON.parse(s))
+      } catch (e) {
+        if (sniff && !data.length) return null
+        errors++
+        if (s.endsWith('\r')) s = s.slice(0, -1)
+        const loc = s.length < 200000 ? locateError(s) : null
+        data.push(new LineError(line, (loc ? loc.msg : String(e.message)).replace(/of the file/g, 'of the line'), s, loc ? loc.pos + 1 : null))
+      }
+      lineNos.push(line)
+    }
+    if (end === n) break
+  }
+  if (sniff && (data.length - errors < 2 || errors * 2 > data.length)) return null
+  if (!data.length) return { error: { message: 'The file is empty.', pos: null }, ms: 0 }
+  return { data, bigs, ms: performance.now() - t0, lines: { count: data.length, errors, lineNos, total: line } }
+}
+
 // ---------------------------------------------------------------------------------------------
 // Smart previews: what a string or a number looks like
 
@@ -788,14 +870,15 @@ function runPath (root, steps, cap) {
   let capped = false
   for (const st of steps) {
     const next = []
+    let full = false // this step reached the cap
     const apply = (node) => {
       const v = node.v
       if (!isBranch(v)) return
       const sel = st.sel
-      const push = (k) => { if (next.length < cap) next.push({ v: v[k], p: node.p.concat([k]) }); else capped = true }
+      const push = (k) => { if (next.length < cap) next.push({ v: v[k], p: node.p.concat([k]) }); else full = true }
       if (sel.all) {
-        if (Array.isArray(v)) for (let i = 0; i < v.length && !capped; i++) push(i)
-        else for (const k in v) { if (capped) break; push(k) }
+        if (Array.isArray(v)) for (let i = 0; i < v.length && !full; i++) push(i)
+        else for (const k in v) { if (full) break; push(k) }
       } else if (sel.slice) {
         if (!Array.isArray(v)) return
         const len = v.length
@@ -803,7 +886,7 @@ function runPath (root, steps, cap) {
         if (step <= 0) step = 1
         a = a == null ? 0 : a < 0 ? Math.max(0, len + a) : Math.min(a, len)
         b = b == null ? len : b < 0 ? Math.max(0, len + b) : Math.min(b, len)
-        for (let i = a; i < b && !capped; i += step) push(i)
+        for (let i = a; i < b && !full; i += step) push(i)
       } else {
         for (const it of sel.items) {
           if (it.index != null) {
@@ -817,10 +900,11 @@ function runPath (root, steps, cap) {
     const walk = (node) => {
       apply(node)
       const v = node.v
-      if (!isBranch(v) || capped) return
-      if (Array.isArray(v)) { for (let i = 0; i < v.length && !capped; i++) if (isBranch(v[i])) walk({ v: v[i], p: node.p.concat([i]) }) } else { for (const k in v) { if (capped) break; if (isBranch(v[k])) walk({ v: v[k], p: node.p.concat([k]) }) } }
+      if (!isBranch(v) || full) return
+      if (Array.isArray(v)) { for (let i = 0; i < v.length && !full; i++) if (isBranch(v[i])) walk({ v: v[i], p: node.p.concat([i]) }) } else { for (const k in v) { if (full) break; if (isBranch(v[k])) walk({ v: v[k], p: node.p.concat([k]) }) } }
     }
-    for (const node of cur) { if (st.desc) walk(node); else apply(node); if (capped) break }
+    for (const node of cur) { if (st.desc) walk(node); else apply(node); if (full) break }
+    if (full) capped = true
     cur = next
   }
   return { results: cur, capped }
@@ -878,7 +962,32 @@ function findTables (root) {
 // at least one other key) and the places that point at a node (an object that is only an @id, or
 // a string under a term the inline @context types as @id). Ids are resolved against @base, or the
 // document's own URL, so "#alex", "people/alex.jsonld#me" and a full URL all compare as full
-// URLs. Only the @context written in the file is read: remote contexts are never fetched.
+// URLs. Only the @context written in the file is read: remote contexts are never fetched. A few
+// well-known ones (ActivityStreams, schema.org, security, DID, credentials) are recognised by their
+// URL, and a small built-in table says which of their terms are @id, @type or hold ids.
+
+// Well-known contexts, by URL (without the scheme or a trailing slash): which terms are aliases of
+// @id and @type, and which hold ids ("@type": "@id"). Small on purpose; nothing is fetched.
+const LD_KEYS = ['controller', 'verificationMethod', 'authentication', 'assertionMethod', 'keyAgreement', 'capabilityInvocation', 'capabilityDelegation']
+const LD_AS = { id: ['id'], type: ['type'], refs: ['actor', 'object', 'target', 'attributedTo', 'inReplyTo', 'to', 'bto', 'cc', 'bcc', 'audience', 'url', 'href', 'icon', 'image', 'attachment', 'tag',
+  'followers', 'following', 'inbox', 'outbox', 'liked', 'likes', 'shares', 'replies', 'first', 'last', 'next', 'prev', 'current', 'partOf', 'items', 'orderedItems', 'sharedInbox'] }
+const LD_SCHEMA = { id: ['id'], type: ['type'], refs: [] } // its url, image and sameAs are web pages and pictures: left as ordinary links
+const LD_SEC = { id: ['id'], type: ['type'], refs: LD_KEYS.concat(['creator', 'owner', 'publicKey']) }
+const LD_DID = { id: ['id'], type: ['type'], refs: LD_KEYS.concat(['alsoKnownAs', 'serviceEndpoint']) }
+const LD_VC = { id: ['id'], type: ['type'], refs: ['issuer', 'holder', 'credentialSubject', 'credentialSchema', 'credentialStatus', 'verificationMethod'] }
+const KNOWN_CONTEXTS = {
+  'www.w3.org/ns/activitystreams': LD_AS,
+  'schema.org': LD_SCHEMA,
+  'w3id.org/security/v1': LD_SEC,
+  'w3id.org/security/v2': LD_SEC,
+  'www.w3.org/ns/did/v1': LD_DID,
+  'www.w3.org/2018/credentials/v1': LD_VC,
+  'www.w3.org/ns/credentials/v2': LD_VC
+}
+function knownContext (url) {
+  const m = /^https?:\/\/([^?#]*?)\/?(?:#.*)?$/i.exec(url)
+  return m && Object.prototype.hasOwnProperty.call(KNOWN_CONTEXTS, m[1]) ? KNOWN_CONTEXTS[m[1]] : null
+}
 
 const RE_HTTP = /^https?:\/\//i
 const RE_PREFIX = /^([^:/?#\s]+):(?!\/\/)(.*)$/
@@ -907,6 +1016,7 @@ function ldIndex (data, docUrl) {
     base: docUrl,
     doc: docOf(docUrl),
     idKeys: new Set(['@id']), // "@id" and its aliases ("id": "@id")
+    typeKeys: new Set(['@type']), // "@type" and its aliases
     refKeys: new Set(), // terms whose string values are ids ({"@type": "@id"})
     prefixes: new Map(), // "schema" -> "https://schema.org/"
     defs: new Map(), // full id -> [{ segs, idSegs }]: where the node is defined
@@ -918,12 +1028,19 @@ function ldIndex (data, docUrl) {
   const top = isPlainObject(data) ? data : Array.isArray(data) && isPlainObject(data[0]) ? data[0] : null
   if (top && top['@context'] != null) {
     for (const c of [].concat(top['@context'])) {
+      const known = typeof c === 'string' ? knownContext(c) : null
+      if (known) { // a remote context we know by its URL: its aliases, from the built-in table
+        for (const k of known.id) X.idKeys.add(k)
+        for (const k of known.type) X.typeKeys.add(k)
+        for (const k of known.refs) X.refKeys.add(k)
+      }
       if (!isPlainObject(c)) continue
       if (typeof c['@base'] === 'string') X.base = absUrl(c['@base'], X.base) || X.base
       for (const k in c) {
         const d = c[k]
         if (k[0] === '@') continue
         if (d === '@id' || (isPlainObject(d) && d['@id'] === '@id')) X.idKeys.add(k)
+        else if (d === '@type' || (isPlainObject(d) && d['@id'] === '@type')) X.typeKeys.add(k)
         else if (typeof d === 'string') { if (/^[a-z][a-z0-9+.-]*:.*[/#:]$/i.test(d)) X.prefixes.set(k, d) } else if (isPlainObject(d) && d['@type'] === '@id') X.refKeys.add(k)
       }
     }
@@ -1032,8 +1149,10 @@ function knownType (subject, store) {
   } catch (e) {}
   return null
 }
-const RE_EXT = /\.(json|jsonld)$/i
-const RE_TYPE = /^application\/(?:ld\+)?json\s*(?:;|$)/i
+const RE_EXT = /\.(json|jsonld|jsonl|ndjson)$/i
+const RE_LINES_EXT = /\.(jsonl|ndjson)$/i
+const RE_LINES_TYPE = /^application\/(?:jsonl|x-ndjson|ndjson|json-seq|x-jsonlines|jsonlines)\s*(?:;|$)/i
+const RE_TYPE = /^application\/(?:(?:ld\+)?json|jsonl|x-ndjson|ndjson|json-seq|x-jsonlines|jsonlines)\s*(?:;|$)/i
 function applies (subject, store) {
   const uri = subject && subject.uri
   if (!uri || uri.endsWith('/')) return false
@@ -1120,15 +1239,32 @@ const pane = {
         bytes = buf.byteLength
       }
       pill(humanBytes(bytes), null, fmt(bytes) + ' bytes')
-      const parsed = parseJSON(text)
+      // JSON Lines by name or type; or by content, when the file fails as JSON but its lines parse
+      const announced = RE_LINES_EXT.test(uri.split(/[?#]/)[0]) || RE_LINES_TYPE.test(ctype)
+      let parsed = announced ? parseLines(text, false) : parseJSON(text)
+      if (announced && parsed.lines && parsed.lines.errors === parsed.lines.count) { // not one line parses: perhaps it is one JSON document after all
+        const whole = parseJSON(text)
+        if (!whole.error) parsed = whole
+      } else if (!announced && parsed.error && text.includes('\n')) {
+        const t1 = performance.now()
+        const lined = parseLines(text, true)
+        if (lined && !lined.error) { lined.ms = parsed.ms + performance.now() - t1; parsed = lined }
+      }
       if (parsed.error) {
         meta.insertBefore(el(doc, 'span', 'jv-pill jv-fmt', 'JSON'), meta.firstChild)
         return showParseError(parsed.error, text)
       }
       const data = parsed.data
-      const ld = ctype === 'application/ld+json' || /\.jsonld$/i.test(uri.split(/[?#]/)[0]) || (isPlainObject(data) && ('@context' in data || '@graph' in data)) || (Array.isArray(data) && isPlainObject(data[0]) && '@context' in data[0])
-      meta.insertBefore(el(doc, 'span', 'jv-pill jv-fmt' + (ld ? ' jv-fmt-ld' : ''), ld ? 'JSON-LD' : 'JSON'), meta.firstChild)
-      if (isBranch(data)) pill((Array.isArray(data) ? 'Array · ' : 'Object · ') + countLabel(data, Array.isArray(data) ? data.length : Object.keys(data).length))
+      const lines = parsed.lines || null
+      const ld = lines ? false : ctype === 'application/ld+json' || /\.jsonld$/i.test(uri.split(/[?#]/)[0]) || (isPlainObject(data) && ('@context' in data || '@graph' in data)) || (Array.isArray(data) && isPlainObject(data[0]) && '@context' in data[0])
+      meta.insertBefore(el(doc, 'span', 'jv-pill jv-fmt' + (ld ? ' jv-fmt-ld' : ''), lines ? 'JSON Lines' : ld ? 'JSON-LD' : 'JSON'), meta.firstChild)
+      if (lines) {
+        pill(plural(lines.count, 'line', 'lines') + (lines.errors ? ' · ' + plural(lines.errors, 'error', 'errors') : ''), lines.errors ? 'jv-pill-err' : null,
+          plural(lines.count, 'record', 'records') + ', one a line' + (lines.errors ? '; ' + plural(lines.errors, 'line does', 'lines do') + ' not parse and ' + (lines.errors === 1 ? 'is' : 'are') + ' shown in place' : '') +
+          (lines.total > lines.count ? '; blank lines are skipped' : ''))
+        root.dataset.lines = String(lines.count)
+        root.dataset.lineErrors = String(lines.errors)
+      } else if (isBranch(data)) pill((Array.isArray(data) ? 'Array · ' : 'Object · ') + countLabel(data, Array.isArray(data) ? data.length : Object.keys(data).length))
       const ldx = ld ? ldIndex(data, absUrl(uri, doc.baseURI) || uri) : null
       if (ldx && (ldx.defs.size || ldx.links)) {
         pill(plural(ldx.defs.size, 'node', 'nodes') + ' · ' + plural(ldx.links, 'link', 'links'), 'jv-pill-ld',
@@ -1142,7 +1278,7 @@ const pane = {
       root.dataset.parseMs = parsed.ms.toFixed(1)
       root.dataset.bytes = String(bytes)
       const host = { peek: context.peek !== false, fetch: fetchFn, go: url => hostGo(context, doc, store, url) }
-      viewer(doc, root, body, { data, text, uri, ld, ldx, host, bytes, images: context.imagePreviews !== false })
+      viewer(doc, root, body, { data, text, uri, ld, ldx, lines, host, bytes, images: context.imagePreviews !== false })
       const raf = globalThis.requestAnimationFrame || (f => setTimeout(f, 16))
       raf(() => { root.dataset.firstRenderMs = (performance.now() - t0).toFixed(1); root.classList.add('jv-ready') })
     })().catch(e => errorCard('The viewer failed', [String((e && e.stack) || e)]))
@@ -1234,6 +1370,7 @@ function viewer (doc, root, body, file) {
     ld,
     images: file.images !== false,
     ldx: file.ldx || null,
+    lines: file.lines || null,
     host: file.host || { peek: false, fetch: null, go: () => false },
     state: { mode: '', term: '', hits: null, total: 0, idx: -1, filter: false },
     match: null,
@@ -1258,7 +1395,7 @@ function viewer (doc, root, body, file) {
     const ok = await copyText(doc, textToCopy)
     V.toast(ok ? 'Copied ' + what : 'Could not copy')
   }
-  V.copyValue = (v) => V.copy(typeof v === 'string' ? v : stringify(v, 2), typeof v === 'string' || !isBranch(v) ? 'the value' : (Array.isArray(v) ? 'the array' : 'the object'))
+  V.copyValue = (v) => V.copy(typeof v === 'string' ? v : isErr(v) ? v.text : stringify(v, 2), isErr(v) ? 'the line as written' : typeof v === 'string' || !isBranch(v) ? 'the value' : (Array.isArray(v) ? 'the array' : 'the object'))
   V.copyPath = (segs) => V.copy(pathOf(segs), pathOf(segs))
 
   // --- image preview popover (hover), shared by every thumbnail button
@@ -1310,11 +1447,43 @@ function viewer (doc, root, body, file) {
   const expandBtn = button(doc, 'jv-btn jv-narrow-sq', 'expand', 'Expand all', 'Expand all', () => {
     show('tree')
     const r = mainTree.expandAll(LIMITS.expandAll)
+    markLevel(0)
     if (r.limited) V.toast('Opened the first ' + fmt(LIMITS.expandAll) + ' rows')
   })
-  const collapseBtn = button(doc, 'jv-btn jv-narrow-sq', 'collapse', 'Collapse all', 'Collapse all', () => { show('tree'); mainTree.collapseAll() })
+  const collapseBtn = button(doc, 'jv-btn jv-narrow-sq', 'collapse', 'Collapse all', 'Collapse all', () => { show('tree'); mainTree.collapseAll(); markLevel(0) })
+  // Level 1-4: open the tree down to that depth, close anything deeper
+  const levels = el(doc, 'div', 'jv-levels')
+  levels.setAttribute('role', 'group')
+  levels.setAttribute('aria-label', 'Open the tree to a level')
+  levels.appendChild(el(doc, 'span', 'jv-levlab', 'Level'))
+  const levelBtns = [1, 2, 3, 4].map(n => {
+    const b = el(doc, 'button', 'jv-lev', String(n))
+    b.type = 'button'
+    b.title = 'Level ' + n + ': open the tree ' + (n === 1 ? 'to its first level only' : n + ' levels deep') + ' and close anything deeper (Alt+' + n + ')'
+    b.setAttribute('aria-label', 'Level ' + n)
+    b.setAttribute('aria-keyshortcuts', 'Alt+' + n)
+    b.setAttribute('aria-pressed', 'false')
+    b.addEventListener('click', () => setLevel(n))
+    levels.appendChild(b)
+    return b
+  })
+  function markLevel (n) {
+    levelBtns.forEach((b, i) => b.setAttribute('aria-pressed', String(i + 1 === n)))
+    if (n) root.dataset.level = String(n); else delete root.dataset.level
+  }
+  V.levelOff = () => { if (root.dataset.level) markLevel(0) }
+  function setLevel (n) {
+    if (V.state.mode === 'query') return
+    show('tree')
+    const r = mainTree.toLevel(n, LIMITS.levelRows)
+    markLevel(n)
+    root.dataset.levelRows = String(r.rows)
+    if (r.limited) V.toast('Level ' + n + ': showing the first ' + fmt(r.rows) + ' rows')
+  }
   const copyAllBtn = button(doc, 'jv-btn jv-narrow-sq', 'copy', 'Copy all', 'Copy the whole file', () => V.copy(text, 'the whole file (' + humanBytes(file.bytes) + ')'))
-  row1.append(tabs, el(doc, 'span', 'jv-grow'), expandBtn, collapseBtn, copyAllBtn)
+  const tools = el(doc, 'div', 'jv-tools')
+  tools.append(levels, expandBtn, collapseBtn, copyAllBtn)
+  row1.append(tabs, el(doc, 'span', 'jv-grow'), tools)
 
   const row2 = el(doc, 'div', 'jv-barrow')
   const search = el(doc, 'div', 'jv-search')
@@ -1345,8 +1514,9 @@ function viewer (doc, root, body, file) {
   row2.append(search, prevBtn, nextBtn, filterBtn)
 
   const pathbar = el(doc, 'div', 'jv-pathbar')
-  pathbar.hidden = true
   const pathCode = el(doc, 'code')
+  pathCode.setAttribute('role', 'group')
+  pathCode.setAttribute('aria-label', 'Path of the selected row: each part jumps to it')
   const copyPathBtn = button(doc, 'jv-btn jv-narrow-sq', 'path', 'Copy path', 'Copy the JSONPath of the selected row', () => { if (V.current) V.copyPath(V.current.segs) })
   const copyValBtn = button(doc, 'jv-btn jv-narrow-sq', 'copy', 'Copy value', 'Copy the value of the selected row', () => { if (V.current) V.copyValue(V.current.value) })
   pathbar.append(pathCode, copyPathBtn, copyValBtn)
@@ -1439,8 +1609,9 @@ function viewer (doc, root, body, file) {
       tabBtns[k].tabIndex = k === id ? 0 : -1
     }
     expandBtn.disabled = collapseBtn.disabled = id !== 'tree' || V.state.mode === 'query'
+    for (const b of levelBtns) b.disabled = expandBtn.disabled
     filterBtn.disabled = V.state.mode === 'query'
-    pathbar.hidden = id !== 'tree' || !V.current || V.state.mode === 'query'
+    pathbar.hidden = id !== 'tree' || V.state.mode === 'query'
     if (id === 'table' && !tableBuilt) { tableBuilt = true; buildTableView() }
     if (id === 'raw' && !rawBuilt) { rawBuilt = true; views.raw.appendChild(makeRaw(V)) }
     syncHeight()
@@ -1472,16 +1643,49 @@ function viewer (doc, root, body, file) {
   }
 
   // The selected row: path bar and copy buttons
+  // The bar is there from the start, with $ alone: were it to appear on the first click, the rows
+  // would move down under the pointer between the press and the release.
+  const noRow = { kind: 'none', segs: [] }
   V.setCurrent = (node) => {
-    V.current = node
-    pathCode.replaceChildren()
-    const p = pathOf(node.segs)
-    const last = node.segs.length ? seg(node.segs[node.segs.length - 1]) : ''
-    pathCode.append(p.slice(0, p.length - last.length), el(doc, 'b', null, last || '$'))
-    if (node.kind === 'bucket') pathCode.append(el(doc, 'span', null, '  ' + rangeLabel(node)))
-    copyValBtn.disabled = node.kind === 'bucket'
+    V.current = node === noRow ? null : node
+    // The path as crumbs: $ › panes › 0 › name. The punctuation of the JSONPath is there but not
+    // drawn, so the text of the bar is still the path ($.panes[0].name).
+    const segs = node.segs
+    const frag = doc.createDocumentFragment()
+    for (let i = 0; i <= segs.length; i++) {
+      const b = el(doc, 'button', 'jv-crumb')
+      b.type = 'button'
+      if (i === 0) {
+        b.textContent = '$'
+        b.title = 'The top of the file' + (V.lines ? ': ' + plural(V.lines.count, 'line', 'lines') : '')
+      } else {
+        const k = segs[i - 1]
+        const sg = seg(k)
+        const pre = typeof k === 'number' ? '[' : sg[0] === '.' ? '.' : "['"
+        const post = typeof k === 'number' ? ']' : sg[0] === '.' ? '' : "']"
+        b.append(el(doc, 'span', 'jv-cx', pre), sg.slice(pre.length, sg.length - post.length))
+        if (post) b.appendChild(el(doc, 'span', 'jv-cx', post))
+        b.title = 'Go to ' + pathOf(segs.slice(0, i))
+      }
+      if (i === segs.length) b.setAttribute('aria-current', 'location')
+      b.addEventListener('click', () => crumbGo(segs.slice(0, i)))
+      frag.appendChild(b)
+    }
+    if (node.kind === 'bucket') frag.appendChild(el(doc, 'span', 'jv-crange', '  ' + rangeLabel(node)))
+    pathCode.replaceChildren(frag)
+    pathCode.dataset.path = pathOf(segs)
+    copyValBtn.disabled = node.kind !== 'value'
+    copyPathBtn.disabled = node === noRow
     pathbar.hidden = V.view !== 'tree' || V.state.mode === 'query'
+    pathCode.scrollLeft = pathCode.scrollWidth // a long path: its end is what is selected
     syncHeight()
+  }
+  function crumbGo (segs) {
+    if (segs.length) return V.showInTree(segs)
+    const first = mainTree.firstItem() // $: the top of the tree
+    if (!first) return
+    mainTree.focus(first)
+    first.firstChild.scrollIntoView({ block: 'center' })
   }
 
   // Keep rows clear of the sticky toolbar when they scroll into view
@@ -1764,7 +1968,7 @@ function viewer (doc, root, body, file) {
   root.addEventListener('focusout', hideTip)
   win.addEventListener('scroll', () => { if (performance.now() - tipAt > 250) hideTip() }, { passive: true }) // not the scroll that brought the link into view
 
-  // --- keys anywhere in the pane: / focuses the search, Esc clears it, Alt+Left / Alt+Right walk the trail
+  // --- keys anywhere in the pane: / focuses the search, Esc clears it, Alt+Left / Alt+Right walk the trail, Alt+1 … Alt+4 set the level
   const onKey = (e) => {
     if (!root.isConnected) { doc.removeEventListener('keydown', onKey); return }
     const t = (e.composedPath && e.composedPath()[0]) || e.target // inside a shadow root, the real target
@@ -1772,6 +1976,10 @@ function viewer (doc, root, body, file) {
     if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
       // only when there is somewhere to go in the trail; otherwise the browser keeps its own Back
       if (!typing && trail.length && (root.contains(t) || t === doc.body || t === doc.documentElement) && trailGo(e.key === 'ArrowLeft' ? -1 : 1)) e.preventDefault()
+      return
+    }
+    if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && /^Digit[1-4]$/.test(e.code || '')) { // Alt+1 … Alt+4: open the tree to that level
+      if (!typing && V.state.mode !== 'query' && (root.contains(t) || t === doc.body || t === doc.documentElement)) { e.preventDefault(); setLevel(+e.code.slice(5)) }
       return
     }
     if (e.key === '/' && !typing && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); q.focus(); q.select() } else if (e.key === 'Escape' && !typing && root.contains(t) && q.value) { q.value = ''; onInput(true) }
@@ -1784,6 +1992,7 @@ function viewer (doc, root, body, file) {
     if (defs && defs[0].segs.length) { show('tree'); goSegs(defs[0].segs, true, true) }
   }
 
+  if (!V.current) V.setCurrent(noRow)
   show('tree')
   updateCount()
   requestAnimationFrame(syncHeight)
@@ -1824,6 +2033,7 @@ function valueEl (V, v, key, parentKey, place, segs) {
   const doc = V.doc
   const t = typeOf(v)
   if (t === 'string') return stringEl(V, v, key, parentKey, place, segs)
+  if (t === 'error') return errorEl(V, v)
   const wrap = el(doc, 'span', 'jv-val')
   const s = hl(V, el(doc, 'span', 'jv-' + t), t === 'null' ? 'null' : String(v))
   wrap.appendChild(s)
@@ -1843,11 +2053,21 @@ function valueEl (V, v, key, parentKey, place, segs) {
   return wrap
 }
 
+// A line of a JSON Lines file that did not parse: where, why, and the start of what it says
+function errorEl (V, v) {
+  const doc = V.doc
+  const wrap = el(doc, 'span', 'jv-val jv-lerr')
+  wrap.title = 'Line ' + fmt(v.line) + (v.col ? ', column ' + fmt(v.col) : '') + ' does not parse. The other lines are not affected.'
+  wrap.append(hl(V, el(doc, 'span', 'jv-lerr-msg'), 'line ' + fmt(v.line) + ': ' + v.message),
+    hl(V, el(doc, 'span', 'jv-lerr-text'), v.text.length > LIMITS.errText ? v.text.slice(0, LIMITS.errText) + '…' : v.text))
+  return wrap
+}
+
 function stringEl (V, s, key, parentKey, place, segs) {
   const doc = V.doc
   const wrap = el(doc, 'span', 'jv-val jv-string')
   const ldKey = V.ld ? (typeof key === 'string' ? key : parentKey) : null
-  if (ldKey === '@type') {
+  if (ldKey !== null && (V.ldx ? V.ldx.typeKeys.has(ldKey) : ldKey === '@type')) {
     const b = hl(V, el(doc, 'span', 'jv-badge'), s)
     b.title = '@type ' + s
     wrap.appendChild(b)
@@ -1925,6 +2145,14 @@ function idEl (V, s, role, place, segs) {
   const plain = (e) => !e.defaultPrevented && !e.button && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey
   const from = () => inMain && place !== 'cell' ? { segs } : null
 
+  if (s === '') { // "@id": "" is the document itself: said in words, with no empty link
+    wrap.appendChild(el(doc, 'span', 'jv-quote', '"'))
+    const note = el(doc, 'span', 'jv-chip jv-hint jv-thisdoc', 'this document')
+    note.title = 'An empty @id is the document itself' + (iri ? ': ' + iri : '')
+    wrap.appendChild(note)
+    return wrap
+  }
+
   if (!defined && !(http && !sameDoc)) { // nothing to follow
     const t = hl(V, el(doc, 'span', 'jv-s jv-idtext'), s)
     t.title = !iri ? '@id ' + s : sameDoc ? 'No node in this document has the @id ' + iri : '@id ' + iri
@@ -1985,7 +2213,8 @@ function idEl (V, s, role, place, segs) {
     e.stopPropagation()
     if (main.host.go(iri)) e.preventDefault() // otherwise the href is followed, in this tab
   })
-  if (main.host.peek && main.host.fetch && place === 'tree' && role === 'ref') wrap.appendChild(peekButton(V, iri, s, wrap))
+  if (RE_IMG.test(iri)) { if (V.images && place !== 'prev') wrap.appendChild(thumbButton(V, iri, place)) } // a picture: its preview, not a peek
+  else if (main.host.peek && main.host.fetch && place === 'tree' && role === 'ref') wrap.appendChild(peekButton(V, iri, s, wrap))
   return wrap
 }
 
@@ -2183,15 +2412,22 @@ function makeTree (V, value, segs, opts) {
       line.append(el(doc, 'span', 'jv-range', rangeLabel(node)), el(doc, 'span', 'jv-count-chip', plural(node.to - node.from, Array.isArray(node.owner.value) ? 'item' : 'key', Array.isArray(node.owner.value) ? 'items' : 'keys')))
     } else {
       node.branch = isBranch(v) && sizeOf(node) > 0
-      if (typeof node.key === 'number') line.append(el(doc, 'span', 'jv-idx', String(node.key)), el(doc, 'span', 'jv-colon', ':'))
+      if (typeof node.key === 'number') {
+        const ix = el(doc, 'span', 'jv-idx', String(node.key))
+        if (V.lines && V === V.main && !opts.mini && node.segs.length === 1) ix.title = 'Record ' + fmt(node.key) + ', line ' + fmt(V.lines.lineNos[node.key])
+        line.append(ix, el(doc, 'span', 'jv-colon', ':'))
+        if (isErr(v)) item.classList.add('jv-errrow')
+      }
       else if (typeof node.key === 'string') {
-        const k = hl(V, el(doc, 'span', 'jv-key' + (V.ld && node.key[0] === '@' ? ' jv-ld' : '')), node.key)
+        const k = hl(V, el(doc, 'span', 'jv-key' + (V.ld && (node.key[0] === '@' || (V.ldx && (V.ldx.idKeys.has(node.key) || V.ldx.typeKeys.has(node.key)))) ? ' jv-ld' : '')), node.key)
         line.append(k, el(doc, 'span', 'jv-colon', ':'))
       }
       if (isBranch(v)) {
         const n = sizeOf(node)
-        if (V.ld && isPlainObject(v) && v['@type'] != null) {
-          for (const ty of [].concat(v['@type']).slice(0, 4)) if (typeof ty === 'string') { const b = el(doc, 'span', 'jv-badge', ty); b.title = '@type ' + ty; line.appendChild(b) }
+        if (V.ld && isPlainObject(v)) {
+          let tk = '@type'
+          if (v[tk] == null && V.ldx) for (const k of V.ldx.typeKeys) if (v[k] != null) { tk = k; break }
+          if (v[tk] != null) for (const ty of [].concat(v[tk]).slice(0, 4)) if (typeof ty === 'string') { const b = el(doc, 'span', 'jv-badge', ty); b.title = '@type ' + ty; line.appendChild(b) }
         }
         if (n === 0) line.appendChild(el(doc, 'span', 'jv-empty', Array.isArray(v) ? '[ ]' : '{ }'))
         else {
@@ -2253,7 +2489,8 @@ function makeTree (V, value, segs, opts) {
     node.expanded = false
     node.el.setAttribute('aria-expanded', 'false')
   }
-  function toggle (node) { if (node.tableOn) { setTable(node, false); return } if (node.expanded) collapse(node); else expand(node) }
+  const byHand = () => { if (!opts.mini && V.levelOff) V.levelOff() } // the tree no longer sits at a level
+  function toggle (node) { byHand(); if (node.tableOn) { setTable(node, false); return } if (node.expanded) collapse(node); else expand(node) }
 
   function setTable (node, on) {
     if (on === !!node.tableOn) return
@@ -2287,6 +2524,7 @@ function makeTree (V, value, segs, opts) {
   }
 
   T.rebuild = () => {
+    byHand()
     T.root = newRoot()
     tree.replaceChildren()
     T.active = null
@@ -2361,6 +2599,34 @@ function makeTree (V, value, segs, opts) {
     const a = T.active
     if (a && !visible(a)) setActive(topOf(a))
   }
+  // Open everything down to a depth and close anything deeper, in document order. A node of depth d
+  // (the top rows are 1) is open when d < depth. Ranges are passed through: one is opened only when
+  // the rows in it are to be opened too. No more than budget rows are shown: after that nothing new
+  // opens, so the first part of the file is at the level and the rest stays closed.
+  T.toLevel = (depth, budget) => {
+    let rows = T.root.children.length
+    let limited = false
+    const base = segs.length
+    const walk = (list) => {
+      for (const n of list) {
+        if (!n.branch) continue
+        const range = n.kind === 'bucket'
+        const want = (range ? n.owner.segs.length - base + 1 : n.segs.length - base) < depth
+        if (want && (!n.expanded || n.tableOn)) {
+          if (limited || rows + childCount(n) > budget) limited = true
+          else expand(n)
+        } else if (!want && !range) {
+          if (n.tableOn) setTable(n, false)
+          collapse(n)
+        }
+        if (n.expanded) { rows += n.children.length; walk(n.children) }
+      }
+    }
+    walk(T.root.children)
+    const a = T.active
+    if (a && !visible(a)) { setActive(topOf(a)); if (!opts.mini) V.setCurrent(T.active.__jv) }
+    return { limited, rows }
+  }
 
   // --- focus and keys
   function visible (item) { for (let p = parentItem(item); p; p = parentItem(p)) if (p.getAttribute('aria-expanded') !== 'true' || !p.__jv.expanded) return false; return true }
@@ -2413,13 +2679,11 @@ function makeTree (V, value, segs, opts) {
       case 'ArrowDown': next = nextVisible(item); break
       case 'ArrowUp': next = prevVisible(item); break
       case 'ArrowRight':
-        if (node.branch && !node.expanded && !node.tableOn) expand(node)
-        else if (openGroup(item)) next = openGroup(item).firstElementChild
+        if (node.branch && !node.expanded && !node.tableOn) { byHand(); expand(node) } else if (openGroup(item)) next = openGroup(item).firstElementChild
         break
       case 'ArrowLeft':
         if (node.tableOn) setTable(node, false)
-        else if (node.expanded) collapse(node)
-        else next = parentItem(item)
+        else if (node.expanded) { byHand(); collapse(node) } else next = parentItem(item)
         break
       case 'Home': next = T.firstItem(); break
       case 'End': next = tree.lastElementChild && tree.lastElementChild.__jv ? lastVisible(tree.lastElementChild) : null; break
@@ -2448,7 +2712,7 @@ function makeTree (V, value, segs, opts) {
 // The table: union of keys as columns, sortable, a page at a time
 
 const collator = (() => { try { return new Intl.Collator('en', { numeric: true, sensitivity: 'base' }) } catch (e) { return null } })()
-const RANK = { number: 0, string: 1, boolean: 2, null: 3, array: 4, object: 5 }
+const RANK = { number: 0, string: 1, boolean: 2, null: 3, array: 4, object: 5, error: 6 }
 function compareCells (a, b) {
   const ta = typeOf(a)
   const tb = typeOf(b)
@@ -2475,7 +2739,7 @@ function makeTable (V, arr, segs) {
   let prims = false
   for (let i = 0; i < arr.length; i++) {
     const r = arr[i]
-    if (isPlainObject(r)) { for (const k in r) if (!seen.has(k) && cols.length < 200) { seen.add(k); cols.push(k) } } else prims = true
+    if (isPlainObject(r)) { for (const k in r) if (!seen.has(k) && cols.length < 200) { seen.add(k); cols.push(k) } } else if (!isErr(r)) prims = true
   }
   const VALUE = { value: true } // the column for items that are not objects
   const columns = prims ? [VALUE, ...cols] : cols
@@ -2492,7 +2756,7 @@ function makeTable (V, arr, segs) {
   let dir = 1
   let page = 0
   const pages = Math.max(1, Math.ceil(arr.length / LIMITS.tablePage))
-  const cell = (r, c) => c === VALUE ? (isPlainObject(r) ? undefined : r) : (isPlainObject(r) && Object.prototype.hasOwnProperty.call(r, c) ? r[c] : undefined)
+  const cell = (r, c) => isErr(r) ? undefined : c === VALUE ? (isPlainObject(r) ? undefined : r) : (isPlainObject(r) && Object.prototype.hasOwnProperty.call(r, c) ? r[c] : undefined)
 
   const no = el(doc, 'th')
   no.appendChild(el(doc, 'span', 'jv-sort', '#'))
@@ -2557,6 +2821,14 @@ function makeTable (V, arr, segs) {
       const r = arr[i]
       const tr = el(doc, 'tr')
       tr.appendChild(el(doc, 'td', 'jv-rowno', String(i)))
+      if (isErr(r)) { // a line that did not parse: one cell across the row
+        const td = el(doc, 'td', 'jv-errcell')
+        td.colSpan = Math.max(1, columns.length)
+        td.appendChild(errorEl(V, r))
+        tr.appendChild(td)
+        frag.appendChild(tr)
+        continue
+      }
       for (const c of columns) {
         const v = cell(r, c)
         const td = el(doc, 'td')
@@ -2640,7 +2912,11 @@ function makeRaw (V) {
   lines.setAttribute('aria-label', 'Raw JSON')
   const more = button(doc, 'jv-btn jv-rawmore', 'down', 'Show more lines', null, () => page())
   box.append(head, lines)
-  let mode = 'pretty'
+  const L = V.lines
+  let bad = null
+  if (L && L.errors) { bad = new Map(); for (const r of V.data) if (isErr(r)) bad.set(r.line, r.message) }
+  if (L) seg.hidden = true // one record a line is the format: no pretty-printing
+  let mode = L ? 'original' : 'pretty'
   let text = ''
   let pos = 0
   let no = 0
@@ -2663,7 +2939,8 @@ function makeRaw (V) {
     for (let j = text.indexOf('\n'); j !== -1; j = text.indexOf('\n', j + 1)) total++
     lines.style.setProperty('--jv-nw', (String(total).length + 1) + 'ch')
     lines.replaceChildren()
-    info.textContent = plural(total, 'line', 'lines') + ' · ' + humanBytes(text.length) + (mode === 'pretty' ? ' · two-space indent' : ' · as served')
+    info.textContent = plural(total, 'line', 'lines') + ' · ' + humanBytes(text.length) + (mode === 'pretty' ? ' · two-space indent' : ' · as served') +
+      (L ? ' · ' + plural(L.count, 'record', 'records') + (L.errors ? ' · ' + plural(L.errors, 'line does', 'lines do') + ' not parse' : '') : '')
     page()
   }
   function page () {
@@ -2673,7 +2950,9 @@ function makeRaw (V) {
       if (end === -1) end = text.length
       let line = text.slice(pos, end)
       if (line.endsWith('\r')) line = line.slice(0, -1)
-      frag.appendChild(rawLine(doc, ++no, line))
+      const row = rawLine(doc, ++no, line)
+      if (bad && bad.has(no)) { row.classList.add('jv-errline'); row.title = 'Line ' + fmt(no) + ': ' + bad.get(no) }
+      frag.appendChild(row)
       pos = end + 1
     }
     lines.appendChild(frag)
