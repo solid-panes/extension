@@ -10,16 +10,25 @@
   <main>
     <label class="row">
       <input type="checkbox" id="enabled">
-      <span>Show JSON pages in the viewer</span>
+      <span>Show JSON, Markdown and mind map pages in the viewer</span>
     </label>
     <label class="row">
       <span>Largest file to open, in MB</span>
       <input type="number" id="maxMB" min="1" max="1000" step="1">
     </label>
     <p class="note">Bigger files are left as the browser shows them.</p>
+    <label class="row">
+      <input type="checkbox" id="solidosLink">
+      <span>Show the "Open in SolidOS" link</span>
+    </label>
+    <p class="note">A link beside the Viewer / Raw switch that opens the same address in the SolidOS data browser. Nothing is sent unless you click it.</p>
+    <h2>Panes</h2>
+    <p class="note">Each kind of page is drawn by a pane. A pane switched off is never offered; a page with no pane left is shown as the browser shows it.</p>
+    <div id="panes"></div>
     <p class="note">No network requests, no data collected. Settings stay in this browser.</p>
     <p class="saved" id="saved" role="status"></p>
   </main>
+  <script src="pane-list.js"></script>
   <script src="options.js"></script>
 </body>
 </html>

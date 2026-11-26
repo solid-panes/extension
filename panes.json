@@ -1,0 +1,35 @@
+{
+  "note": "Written by tools/copy-pane.mjs. Each file is an unchanged copy of the one in its repository.",
+  "panes": [
+    {
+      "file": "mindstr-pane.js",
+      "licence": "AGPL-3.0-or-later",
+      "repository": "https://github.com/solid-panes/mindstr",
+      "commit": "96da9c758a5c40f23b1bb849fbaaf5478bab87e8",
+      "changedSinceCommit": false,
+      "source": "~/scratch/2026-11-25-mindstr-repo/mindstr-pane.js",
+      "bytes": 20851,
+      "sha256": "ad47f4b62c7895f9d976ca79a31db0a618db8acf7a36a67236ec10028f0f7b8b"
+    },
+    {
+      "file": "notes-pane.js",
+      "licence": "MIT",
+      "repository": "https://github.com/solid-panes/notes",
+      "commit": "f996c3ef14c1a3401f3e153a24fc69440610d00a",
+      "changedSinceCommit": false,
+      "source": "~/remote/github.com/solid-panes/notes/notes-pane.js",
+      "bytes": 15115,
+      "sha256": "bed45305786cb9ca3854f51b5b300c7c3ef02a5d72c3940f4b2bbc2faeb89623"
+    },
+    {
+      "file": "json-pane.js",
+      "licence": "AGPL-3.0-or-later",
+      "repository": "https://github.com/solid-panes/json",
+      "commit": "a42e031e0dccbd7abd687e889629873f22ef778b",
+      "changedSinceCommit": false,
+      "source": "~/scratch/2026-11-26-json-repo/json-pane.js",
+      "bytes": 147087,
+      "sha256": "ed01b3a1b3b3d346751d7a0918722a7870024250c99c79061091073eedb426f3"
+    }
+  ]
+}

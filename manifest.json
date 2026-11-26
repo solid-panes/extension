@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "Solid JSON Viewer",
   "short_name": "JSON Viewer",
-  "version": "0.0.2",
-  "description": "Shows JSON, JSON-LD and JSON Lines responses as a tree, a table and raw text. No network requests, no data collected.",
+  "version": "0.0.3",
+  "description": "Shows JSON, JSON-LD and JSON Lines as a tree or table, Markdown notes and Mindstr mind maps. No network requests, no data collected.",
   "author": "Melvin Carvalho",
   "homepage_url": "https://solid-panes.github.io/json/",
   "icons": {
@@ -16,13 +16,13 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content.js"],
+      "js": ["pane-list.js", "content.js"],
       "run_at": "document_start"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["json-pane.js"],
+      "resources": ["json-pane.js", "notes-pane.js", "mindstr-pane.js"],
       "matches": ["<all_urls>"]
     }
   ],
