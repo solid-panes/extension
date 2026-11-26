@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JSON Viewer options</title>
+<link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main>
+    <label class="row">
+      <input type="checkbox" id="enabled">
+      <span>Show JSON pages in the viewer</span>
+    </label>
+    <label class="row">
+      <span>Largest file to open, in MB</span>
+      <input type="number" id="maxMB" min="1" max="1000" step="1">
+    </label>
+    <p class="note">Bigger files are left as the browser shows them.</p>
+    <p class="note">No network requests, no data collected. Settings stay in this browser.</p>
+    <p class="saved" id="saved" role="status"></p>
+  </main>
+  <script src="options.js"></script>
+</body>
+</html>

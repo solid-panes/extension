@@ -1,0 +1,8 @@
+:root { color-scheme: light }
+body { margin: 0; background: #fff; color: #1b2230; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif }
+main { max-width: 420px; padding: 16px }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px }
+input[type=checkbox] { width: 22px; height: 22px; margin: 0; order: 2 }
+input[type=number] { width: 96px; height: 40px; padding: 0 10px; border: 1px solid #d8dce5; border-radius: 10px; font: inherit }
+.note { margin: 6px 0 0; color: #5f687a; font-size: 13px }
+.saved { min-height: 20px; margin: 8px 0 0; color: #0b7a43; font-size: 13px }
