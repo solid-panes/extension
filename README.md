@@ -1,4 +1,4 @@
-# Solid JSON Viewer (browser extension) 0.0.3
+# Solid JSON Viewer (browser extension) 0.0.4
 
 A small **pane host** for the browser: it opens JSON, Markdown and mind map pages with the same panes the SolidOS data browser uses, bundled inside the extension.
 
@@ -12,7 +12,7 @@ Landing page: **https://solid-panes.github.io/extension/**
 
 ## The panes
 
-Each pane is the file from its own repository, copied in byte for byte. All the adapting to a browser page is in `content.js`.
+Each pane is the file from its own repository, copied in byte for byte. All the adapting to a browser page is in `content.js` and `host/`.
 
 | Pane | File | Opens | Licence | Source |
 |---|---|---|---|---|
@@ -75,7 +75,7 @@ Right-click the toolbar icon (or open the extension's details) and choose **Opti
 
 ## How it works
 
-- `content.js` runs at `document_start` on every page and returns at once unless the content type matches. For a page it knows, it hides the page (so the raw text does not flash), waits for the body, takes the text of the single `<pre>`, loads the panes that could fit from the extension with `import()`, and asks each one's `label(subject, context)`. The first that fits is drawn in place of the page; the others are drawn when their tab is first chosen, and kept, so switching back is instant. The original page is kept for **Raw**.
+- `content.js` (with the modules in `host/`) runs at `document_start` on every page and returns at once unless the content type matches. For a page it knows, it hides the page (so the raw text does not flash), waits for the body, takes the text of the single `<pre>`, loads the panes that could fit from the extension with `import()`, and asks each one's `label(subject, context)`. The first that fits is drawn in place of the page; the others are drawn when their tab is first chosen, and kept, so switching back is instant. The original page is kept for **Raw**.
 - **The shim** gives every pane the same `subject` (`uri`, `value`, `doc()`) and `context`: `dom`; `session.store` with `sym`, `each`, `any`, `statementsMatching` and `fetcher._fetch` / `fetcher.load` (only what the three panes call); `getOutliner().GotoSubject` and `navigate`, both of which are `location.assign`; and the JSON pane's hooks `source`, `shadow`, `imagePreviews: false`, `peek: false`. The content script's own `fetch` is replaced by the same answer-from-the-page function, for a pane that calls `fetch` by name; the page's `fetch` is a different object and is not touched.
 - **Styles under a strict page policy.** Every pane is drawn inside a shadow root. A pane puts its CSS in a `<style>` element, which a strict `Content-Security-Policy` (for example `default-src 'none'`) blocks; so before the pane goes into the page the host moves each `<style>` into a constructed stylesheet, which the policy allows, and watches for any added later. (The JSON pane does this for itself.) The tab icons are the panes' own SVG icons rebuilt as elements, since an `<img>` with a `data:` address would be blocked too.
 - The three pane files are listed in `web_accessible_resources` so the content script can import them; a page can therefore tell the extension is installed.
@@ -85,16 +85,29 @@ Right-click the toolbar icon (or open the extension's details) and choose **Opti
 | File | What |
 |---|---|
 | `manifest.json` | One Manifest V3 file for Chromium and Firefox (`browser_specific_settings.gecko`: id, `strict_min_version` 140.0, `data_collection_permissions` `["none"]`) |
-| `content.js` | The host: detection, the shim, the tab bar, the Viewer / Raw switch |
 | `pane-list.js` | The bundled panes, in order: name, file, what each opens, licence, source |
+| `host/config.js` | Which features are on (tab bar, Viewer / Raw switch, Open in SolidOS link), and the kinds of page to look for, taken from the pane list. With `pane-list.js`, the one place that says what the build contains |
+| `host/detect.js` | What kind of page this is: the content-type tests, the single `<pre>` test, JSON and JSON Lines in plain text, Markdown by address |
+| `host/settings.js` | The user's settings from `storage.local`, with their defaults; remembers the last tab chosen |
+| `host/shim.js` | The `subject` and `context` each pane is given: the store stub, navigation, and the fetch guard (the page's own address answered from its text, everything else refused) |
+| `host/styles.js` | Constructed stylesheets, and lifting a pane's `<style>` elements into them for strict page policies |
+| `host/panes.js` | Which bundled panes fit the page; loading a pane's file; mounting it in a shadow root |
+| `host/controls.js` | The tab bar, the Open in SolidOS link and the Viewer / Raw switch |
+| `content.js` | The entry point: hides the page, calls the modules in order, keeps track of which pane is showing |
 | `json-pane.js`, `notes-pane.js`, `mindstr-pane.js` | The panes, copied unchanged by `node tools/copy-pane.mjs` |
 | `panes.json`, `notes-pane.LICENSE` | Written by the same tool: where each pane came from (repository, commit, SHA-256), and the Notes pane's MIT licence |
 | `options.html`, `options.js`, `options.css` | The options page |
 | `icons/` | `icon.svg` and the PNGs drawn from it by `node tools/make-icons.mjs` |
 
+The host files are plain scripts, listed in order in the manifest's `content_scripts`; each adds its part to one object, `SOLID_PANE_HOST`, in the content script's own world. There is no build step, and they are not in `web_accessible_resources`, so a page cannot see them. A build with fewer panes is a shorter `pane-list.js` (and the matching pane files taken out of `web_accessible_resources`); a control is switched off in `host/config.js`.
+
 Not part of the extension (nothing in `manifest.json` refers to them; leave them out of a store package): `index.html` and `og.png` (the landing page and its share picture, served by GitHub Pages), `.nojekyll`, and the rest of `tools/` (`og.html`, `og.mjs`, `og-sample.json`, `og-emblem.svg`, `atkinson.woff2`; `node tools/og.mjs` redraws `og.png`).
 
 ## Changes
+
+### 0.0.4
+
+- internal: host code split into modules; no change in behaviour
 
 ### 0.0.3
 

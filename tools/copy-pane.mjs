@@ -2,7 +2,7 @@
 // writes panes.json: where each file came from, at which commit, and its SHA-256.
 //   node tools/copy-pane.mjs                      copy all three from the default folders
 //   node tools/copy-pane.mjs json=path/to/json-pane.js notes=... mindstr=...   other sources
-// Nothing in a pane is edited; all adapting to the browser page is in content.js.
+// Nothing in a pane is edited; all adapting to the browser page is in content.js and host/.
 import { readFileSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
