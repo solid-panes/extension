@@ -14,8 +14,11 @@
 // One search box finds keys and values (highlight, next/previous, count, a Filter that hides
 // branches without matches), and when it starts with $ it runs a JSONPath query instead.
 // A Schema panel lists the inferred type of every path. JSON-LD gets a light touch: @type values
-// are badges and @id values are links. A file that does not parse gets an error card with the
-// line, column and the text around it.
+// are badges and @id values are links that are followed in place: a reference to a node the same
+// document defines jumps to it in the tree (with a back / forward trail, and "N references" on the
+// definition to step through what points at it); a reference to another document opens it through
+// the host, and "peek" fetches it and shows the node right under the reference. A file that does
+// not parse gets an error card with the line, column and the text around it.
 // Numbers too long for a JavaScript number (integers beyond 2^53, long decimals) keep their exact
 // source text everywhere and carry a small "big" badge.
 // It imports nothing, builds the DOM with createElement/textContent (never innerHTML), and
@@ -29,11 +32,17 @@
 //   context.shadow  — true to draw inside an open shadow root; styles then go in as a constructed
 //                     stylesheet, which a strict page Content-Security-Policy does not block;
 //   context.imagePreviews — false to leave out picture previews, so nothing is loaded even on hover;
+//   context.navigate — a function (url) that opens another document in place, used for a link to
+//                     another document when the host has no outliner (SolidOS: getOutliner().GotoSubject);
+//                     with neither, the link's own href is followed in the same tab;
+//   context.peek    — false to leave out "peek", the one control that fetches another document
+//                     (on a click only); a host that promises no network requests sets this;
 //   pane.css        — the built-in CSS, for hosts that want to ship it as a file.
 //
 // https://solid-panes.github.io/json/ · licence: AGPL-3.0-or-later (see LICENSE).
 
 const ACCEPT = 'application/json, application/ld+json;q=0.9, */*;q=0.5' // short: no CORS preflight
+const PEEK_ACCEPT = 'application/ld+json, application/json;q=0.9, */*;q=0.1' // the same, for a linked document
 const SANS = 'system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, "Helvetica Neue", sans-serif'
 const MONO = 'ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace'
 const LIMITS = {
@@ -73,6 +82,7 @@ const CSS = `
 .jv-pill.jv-fmt { background: var(--jv-accent-soft); color: var(--jv-accent-ink) }
 .jv-pill.jv-fmt-ld { background: #f1eafd; color: #6633b0 }
 .jv-pill.jv-pill-big { background: #fdf0e6; color: #9a4609 }
+.jv-pill.jv-pill-ld { background: #f1eafd; color: #6633b0 }
 
 .jv-bar { position: sticky; top: 0; z-index: 4; display: flex; flex-direction: column; gap: 8px; padding: 10px 20px; background: #fff;
   border-top: 1px solid var(--jv-line); border-bottom: 1px solid var(--jv-line); backdrop-filter: saturate(1.4) blur(8px); -webkit-backdrop-filter: saturate(1.4) blur(8px) }
@@ -108,6 +118,10 @@ const CSS = `
 .jv-pathbar code { flex: 1 1 auto; min-width: 0; padding: 0 2px; font: 13px/1.4 ${MONO}; color: #3a4357; overflow-wrap: anywhere }
 .jv-pathbar code b { font-weight: 600; color: var(--jv-key) }
 .jv-pathbar .jv-btn { height: 40px; font-size: 13px; padding: 0 12px }
+
+.jv-trail { display: flex; align-items: center; gap: 8px; min-height: 44px }
+.jv-trailtext { flex: 1 1 auto; min-width: 0; color: #4a5366; font-size: 13px; line-height: 1.35; overflow-wrap: anywhere }
+.jv-trailtext b { color: #6633b0; font-weight: 650 }
 
 .jv-schema { margin: 14px 20px 0; border: 1px solid var(--jv-line); border-radius: 12px; background: #fff; overflow: hidden }
 .jv-schema > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-height: 46px; padding: 8px 14px; cursor: pointer; list-style: none; user-select: none }
@@ -188,6 +202,34 @@ mark.jv-mark { background: var(--jv-hit); color: inherit; border-radius: 3px; bo
 .jv-note { padding: 18px 4px; color: var(--jv-muted) }
 .jv-inline-table { margin: 4px 0 10px 24px }
 
+.jv-ref.jv-local, .jv-ref.jv-self { color: #6633b0; text-decoration-color: rgba(102, 51, 176, .4) }
+.jv-ref[role="link"] { cursor: pointer }
+.jv-idtext { color: #4a5366 }
+.jv-chip.jv-def { background: #f1eafd; color: #6633b0 }
+.jv .jv-refs, .jv .jv-peek, .jv .jv-pclose { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; padding: 0 8px; height: 22px; border: 1px solid #d9c8f5; border-radius: 6px;
+  background: #fff; color: #6633b0; font: 600 12px/20px ${SANS}; cursor: pointer; vertical-align: 1px; white-space: nowrap }
+.jv-refs .jv-i, .jv-peek .jv-i, .jv-pclose .jv-i { width: 13px; height: 13px }
+.jv-refs:hover, .jv-peek[aria-expanded="true"] { background: #f1eafd }
+.jv .jv-peek, .jv .jv-pclose { border-color: #d8dce5; color: var(--jv-accent-ink) }
+.jv-peek:hover, .jv-pclose:hover { background: var(--jv-accent-soft) }
+.jv .jv-peek[aria-expanded="true"] { border-color: #d9c8f5; color: #6633b0 }
+.jv-refprev { margin-left: 8px; color: #9aa1af }
+.jv-item[aria-expanded="true"] > .jv-row .jv-refprev { display: none }
+.jv-flash > .jv-row { animation: jv-flash 1.8s ease-out; box-shadow: inset 3px 0 0 #8a56d8 }
+@keyframes jv-flash { 0%, 40% { background: #e2d3fb } 100% { background: rgba(226, 211, 251, 0) } }
+.jv-peekbox { margin: 2px 0 8px 24px; border: 1px solid #e1d6f6; border-left: 3px solid #b79aec; border-radius: 10px; background: #fff; overflow: hidden; cursor: default }
+.jv-peekhead { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 5px 6px 5px 12px; background: #faf7ff; border-bottom: 1px solid #ece4fa; font: 12.5px/1.4 ${SANS}; color: #5f687a }
+.jv-peeksrc { min-width: 0; font-weight: 600; overflow-wrap: anywhere }
+.jv-peekwhat { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere }
+.jv .jv-pclose { margin-left: 0; height: 28px; padding: 0 10px }
+.jv-peekbody { padding: 4px 8px }
+.jv-peekbody > .jv-tree { padding: 0 }
+.jv-peekmsg { padding: 6px 4px; color: var(--jv-muted); font: 13px/1.5 ${SANS}; overflow-wrap: anywhere }
+.jv-peekbad .jv-peekmsg { color: #a3262a }
+.jv-tip { position: fixed; z-index: 35; max-width: min(520px, calc(100vw - 16px)); padding: 5px 9px; border-radius: 8px; background: #1d2433; color: #fff; font: 12px/1.4 ${MONO}; overflow-wrap: anywhere;
+  pointer-events: none; box-shadow: 0 8px 24px rgba(20, 30, 60, .22) }
+@media (prefers-reduced-motion: reduce) { .jv-flash > .jv-row { animation: none; background: #efe6fd } }
+
 .jv-results { display: flex; flex-direction: column; gap: 10px; padding: 4px 0 8px }
 .jv-rhead { color: var(--jv-muted); font-size: 13.5px; padding: 2px 2px 0 }
 .jv-rhead.jv-bad { color: #a3262a }
@@ -263,7 +305,8 @@ mark.jv-mark { background: var(--jv-hit); color: inherit; border-radius: 3px; bo
   .jv-view { padding: 8px 12px 0 }
   .jv-group { margin-left: 10px; padding-left: 6px }
   .jv-tree, .jv-res-body { font-size: 13px }
-  .jv-inline-table { margin-left: 8px }
+  .jv-inline-table, .jv-peekbox { margin-left: 8px }
+  .jv-row:has(.jv-ref, .jv-peek) > .jv-acts { display: none !important } /* the row's link comes first; Copy is in the bar above */
   .jv-card { margin: 14px 12px; padding: 16px }
   .jv-no { padding: 0 10px 0 8px }
 }
@@ -272,6 +315,8 @@ mark.jv-mark { background: var(--jv-hit); color: inherit; border-radius: 3px; bo
   .jv-acts { top: 6px }
   .jv-act { height: 32px }
   .jv-thumb, .jv-more { height: 30px; min-width: 34px }
+  .jv .jv-refs, .jv .jv-peek, .jv .jv-pclose { height: 30px }
+  .jv-refs::after, .jv-peek::after, .jv-pclose::after { content: ''; position: absolute; inset: -8px -3px } /* a 46 px touch target */
 }
 `
 
@@ -303,7 +348,12 @@ const PATHS = {
   sort: 'M8 9l4-4 4 4M8 15l4 4 4-4',
   asc: 'M8 14l4-4 4 4',
   desc: 'M8 10l4 4 4-4',
-  tree: 'M5 5h5M5 5v14M5 12h6M5 19h6M13 5h6M14 12h6M14 19h6'
+  tree: 'M5 5h5M5 5v14M5 12h6M5 19h6M13 5h6M14 12h6M14 19h6',
+  back: 'M19 12H5M11 6l-6 6 6 6',
+  forward: 'M5 12h14M13 6l6 6-6 6',
+  target: 'M12 5a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM12 11a1 1 0 1 0 0 2 1 1 0 0 0 0-2z',
+  link: 'M9 15l6-6M10.5 6.5l1.2-1.2a4 4 0 0 1 5.7 5.7l-1.2 1.2M13.5 17.5l-1.2 1.2a4 4 0 0 1-5.7-5.7l1.2-1.2',
+  eye: 'M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12zM12 9.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z'
 }
 function icon (doc, name, size) {
   const s = doc.createElementNS(SVGNS, 'svg')
@@ -824,6 +874,146 @@ function findTables (root) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// JSON-LD links. One walk of the document finds the nodes it defines (an object with an @id and
+// at least one other key) and the places that point at a node (an object that is only an @id, or
+// a string under a term the inline @context types as @id). Ids are resolved against @base, or the
+// document's own URL, so "#alex", "people/alex.jsonld#me" and a full URL all compare as full
+// URLs. Only the @context written in the file is read: remote contexts are never fetched.
+
+const RE_HTTP = /^https?:\/\//i
+const RE_PREFIX = /^([^:/?#\s]+):(?!\/\/)(.*)$/
+function docOf (iri) { const i = iri.indexOf('#'); return i < 0 ? iri : iri.slice(0, i) }
+function absUrl (s, base) { try { return new URL(s, base).href } catch (e) { return null } }
+function getAt (data, segs) { let v = data; for (const k of segs) { if (!isBranch(v)) return undefined; v = v[k] } return v }
+// A short name for an id: "#alex" inside this document, "alex.jsonld#me" for another one
+function shortIri (iri, here) {
+  if (iri.startsWith('_:')) return iri
+  const d = docOf(iri)
+  const frag = iri.slice(d.length)
+  if (d === here) return frag || 'this document'
+  let tail = d
+  try {
+    const u = new URL(d)
+    const parts = u.pathname.split('/').filter(Boolean)
+    tail = parts.length && RE_HTTP.test(d) ? decodeURIComponent(parts[parts.length - 1]) : d
+    if (!parts.length) tail = u.host || d
+  } catch (e) {}
+  return tail + frag
+}
+
+function ldIndex (data, docUrl) {
+  const t0 = performance.now()
+  const X = {
+    base: docUrl,
+    doc: docOf(docUrl),
+    idKeys: new Set(['@id']), // "@id" and its aliases ("id": "@id")
+    refKeys: new Set(), // terms whose string values are ids ({"@type": "@id"})
+    prefixes: new Map(), // "schema" -> "https://schema.org/"
+    defs: new Map(), // full id -> [{ segs, idSegs }]: where the node is defined
+    refs: new Map(), // full id -> [segs]: the strings that point at it
+    role: new Map(), // path of an id string -> 'def' | 'ref'
+    links: 0,
+    local: 0
+  }
+  const top = isPlainObject(data) ? data : Array.isArray(data) && isPlainObject(data[0]) ? data[0] : null
+  if (top && top['@context'] != null) {
+    for (const c of [].concat(top['@context'])) {
+      if (!isPlainObject(c)) continue
+      if (typeof c['@base'] === 'string') X.base = absUrl(c['@base'], X.base) || X.base
+      for (const k in c) {
+        const d = c[k]
+        if (k[0] === '@') continue
+        if (d === '@id' || (isPlainObject(d) && d['@id'] === '@id')) X.idKeys.add(k)
+        else if (typeof d === 'string') { if (/^[a-z][a-z0-9+.-]*:.*[/#:]$/i.test(d)) X.prefixes.set(k, d) } else if (isPlainObject(d) && d['@type'] === '@id') X.refKeys.add(k)
+      }
+    }
+  }
+  X.resolve = (s) => {
+    if (typeof s !== 'string' || s.length > 2048) return null
+    if (s.startsWith('_:')) return s
+    const m = X.prefixes.size ? RE_PREFIX.exec(s) : null
+    if (m && X.prefixes.has(m[1])) s = X.prefixes.get(m[1]) + m[2]
+    return absUrl(s, X.base)
+  }
+  const path = []
+  const add = (map, iri, entry) => { const a = map.get(iri); if (a) a.push(entry); else map.set(iri, [entry]) }
+  const refAt = (s, segs) => {
+    const iri = X.resolve(s)
+    if (!iri) return
+    X.role.set(pkey(segs), 'ref')
+    add(X.refs, iri, segs)
+    X.links++
+  }
+  const walk = (v, key) => {
+    if (Array.isArray(v)) {
+      const ids = X.refKeys.has(key)
+      for (let i = 0; i < v.length; i++) {
+        const c = v[i]
+        if (isBranch(c)) { path.push(i); walk(c, key); path.pop() } else if (ids && typeof c === 'string') refAt(c, path.concat([i]))
+      }
+      return
+    }
+    let idKey = null
+    let n = 0
+    for (const k in v) { if (k !== '@context') n++; if (idKey === null && X.idKeys.has(k) && typeof v[k] === 'string') idKey = k }
+    if (idKey !== null) {
+      const idSegs = path.concat([idKey])
+      if (n > 1) {
+        const iri = X.resolve(v[idKey])
+        if (iri) { X.role.set(pkey(idSegs), 'def'); add(X.defs, iri, { segs: path.slice(), idSegs }) }
+      } else refAt(v[idKey], idSegs)
+    }
+    for (const k in v) {
+      if (k === '@context') continue // term definitions are not nodes
+      const c = v[k]
+      if (isBranch(c)) { path.push(k); walk(c, k); path.pop() } else if (typeof c === 'string' && k !== idKey && X.refKeys.has(k)) refAt(c, path.concat([k]))
+    }
+  }
+  if (isBranch(data)) walk(data, null)
+  for (const [iri, list] of X.refs) if (X.defs.has(iri)) X.local += list.length
+  X.ms = performance.now() - t0
+  return X
+}
+
+// The one key of an object that is only a reference ({"@id": "#alex"}), or null
+function soleRef (V, v, segs) {
+  if (!V.ldx || !isPlainObject(v)) return null
+  let key = null
+  for (const k in v) { if (key !== null) return null; key = k }
+  return key !== null && typeof v[key] === 'string' && V.ldx.role.get(pkey(segs.concat([key]))) === 'ref' ? key : null
+}
+
+// Fetch a linked document for "peek": once, on a click, with a short Accept header
+async function fetchPeek (fetchFn, url) {
+  let res, text
+  try { res = await fetchFn(url, { headers: { accept: PEEK_ACCEPT } }) } catch (e) {
+    return { error: 'Could not fetch it: the server did not answer, or it does not let this page read it (CORS).' }
+  }
+  if (!res.ok) return { error: 'Could not fetch it: the server answered ' + res.status + (res.statusText ? ' ' + res.statusText : '') + '.' }
+  try { text = (await res.text()).replace(/^﻿/, '') } catch (e) { return { error: 'Could not read it: ' + String((e && e.message) || e) } }
+  const parsed = parseJSON(text)
+  if (parsed.error) return { error: 'It is not JSON' + (parsed.error.line ? ' (line ' + fmt(parsed.error.line) + ', column ' + fmt(parsed.error.col) + ')' : '') + '.' }
+  return { data: parsed.data, ldx: ldIndex(parsed.data, url), bytes: text.length }
+}
+
+// How a link to another document is followed: the SolidOS outliner, else the host's own
+// context.navigate, else (false) the link's href.
+function hostGo (context, doc, store, url) {
+  if (!RE_HTTP.test(url)) return false
+  try {
+    const outliner = typeof context.getOutliner === 'function' && context.getOutliner(doc)
+    if (outliner && typeof outliner.GotoSubject === 'function') {
+      const term = store && typeof store.sym === 'function' ? store.sym(url)
+        : { termType: 'NamedNode', value: url, uri: url, doc () { const d = docOf(url); return { termType: 'NamedNode', value: d, uri: d, doc () { return this } } } }
+      outliner.GotoSubject(term, true, undefined, true, undefined)
+      return true
+    }
+  } catch (e) {}
+  try { if (typeof context.navigate === 'function') { context.navigate(url); return true } } catch (e) {}
+  return false
+}
+
+// ---------------------------------------------------------------------------------------------
 // The pane
 
 function knownType (subject, store) {
@@ -939,12 +1129,20 @@ const pane = {
       const ld = ctype === 'application/ld+json' || /\.jsonld$/i.test(uri.split(/[?#]/)[0]) || (isPlainObject(data) && ('@context' in data || '@graph' in data)) || (Array.isArray(data) && isPlainObject(data[0]) && '@context' in data[0])
       meta.insertBefore(el(doc, 'span', 'jv-pill jv-fmt' + (ld ? ' jv-fmt-ld' : ''), ld ? 'JSON-LD' : 'JSON'), meta.firstChild)
       if (isBranch(data)) pill((Array.isArray(data) ? 'Array · ' : 'Object · ') + countLabel(data, Array.isArray(data) ? data.length : Object.keys(data).length))
+      const ldx = ld ? ldIndex(data, absUrl(uri, doc.baseURI) || uri) : null
+      if (ldx && (ldx.defs.size || ldx.links)) {
+        pill(plural(ldx.defs.size, 'node', 'nodes') + ' · ' + plural(ldx.links, 'link', 'links'), 'jv-pill-ld',
+          plural(ldx.defs.size, 'node has', 'nodes have') + ' an @id; ' + plural(ldx.links, 'reference', 'references') + ' to an @id, ' + fmt(ldx.local) + ' to a node in this document and ' + fmt(ldx.links - ldx.local) + ' elsewhere')
+        root.dataset.ldNodes = String(ldx.defs.size)
+        root.dataset.ldLinks = String(ldx.links)
+      }
       pill('parsed in ' + humanMs(parsed.ms), null, 'Parsed once, in the browser')
       if (parsed.bigs) pill(plural(parsed.bigs, 'big number', 'big numbers'), 'jv-pill-big', 'Numbers too long for a JavaScript number, kept exactly as written')
       root.dataset.bigs = String(parsed.bigs || 0)
       root.dataset.parseMs = parsed.ms.toFixed(1)
       root.dataset.bytes = String(bytes)
-      viewer(doc, root, body, { data, text, uri, ld, bytes, images: context.imagePreviews !== false })
+      const host = { peek: context.peek !== false, fetch: fetchFn, go: url => hostGo(context, doc, store, url) }
+      viewer(doc, root, body, { data, text, uri, ld, ldx, host, bytes, images: context.imagePreviews !== false })
       const raf = globalThis.requestAnimationFrame || (f => setTimeout(f, 16))
       raf(() => { root.dataset.firstRenderMs = (performance.now() - t0).toFixed(1); root.classList.add('jv-ready') })
     })().catch(e => errorCard('The viewer failed', [String((e && e.stack) || e)]))
@@ -1035,11 +1233,15 @@ function viewer (doc, root, body, file) {
     base: uri,
     ld,
     images: file.images !== false,
+    ldx: file.ldx || null,
+    host: file.host || { peek: false, fetch: null, go: () => false },
     state: { mode: '', term: '', hits: null, total: 0, idx: -1, filter: false },
     match: null,
     current: null,
     focusedTree: null
   }
+  V.main = V // a peeked document gets a viewer state of its own, which points back here
+  const win = doc.defaultView || globalThis
 
   // --- toast and copy
   const toast = el(doc, 'div', 'jv-toast')
@@ -1148,7 +1350,20 @@ function viewer (doc, root, body, file) {
   const copyPathBtn = button(doc, 'jv-btn jv-narrow-sq', 'path', 'Copy path', 'Copy the JSONPath of the selected row', () => { if (V.current) V.copyPath(V.current.segs) })
   const copyValBtn = button(doc, 'jv-btn jv-narrow-sq', 'copy', 'Copy value', 'Copy the value of the selected row', () => { if (V.current) V.copyValue(V.current.value) })
   pathbar.append(pathCode, copyPathBtn, copyValBtn)
-  bar.append(row1, row2, pathbar)
+
+  // the trail of @id jumps: shown from the first jump on
+  const trailRow = el(doc, 'div', 'jv-trail')
+  trailRow.hidden = true
+  const backBtn = button(doc, 'jv-btn jv-sq jv-back', 'back', null, 'Back to where you were (Alt+Left)', () => trailGo(-1))
+  const fwdBtn = button(doc, 'jv-btn jv-sq jv-fwd', 'forward', null, 'Forward (Alt+Right)', () => trailGo(1))
+  backBtn.setAttribute('aria-keyshortcuts', 'Alt+ArrowLeft')
+  fwdBtn.setAttribute('aria-keyshortcuts', 'Alt+ArrowRight')
+  const trailText = el(doc, 'span', 'jv-trailtext')
+  trailText.setAttribute('aria-live', 'polite')
+  const stepBtn = button(doc, 'jv-btn jv-narrow-sq jv-step', 'down', 'Next reference', 'The next place that points to this node', () => { const e = trail[ti]; if (e && e.ref) V.ldStep(e.ref) })
+  stepBtn.hidden = true
+  trailRow.append(backBtn, fwdBtn, trailText, stepBtn)
+  bar.append(row1, row2, trailRow, pathbar)
 
   // --- schema panel
   const schema = el(doc, 'details', 'jv-schema')
@@ -1415,7 +1630,7 @@ function viewer (doc, root, body, file) {
       b.appendChild(makeTree(V, r.v, r.p, { label: pathOf(r.p), autoRows: 12, mini: true }).el)
     } else {
       const line = el(doc, 'div', 'jv-line')
-      line.appendChild(isBranch(r.v) ? el(doc, 'span', 'jv-empty', Array.isArray(r.v) ? '[]' : '{}') : valueEl(V, r.v, r.p[r.p.length - 1], r.p.length > 1 ? r.p[r.p.length - 2] : null, 'tree'))
+      line.appendChild(isBranch(r.v) ? el(doc, 'span', 'jv-empty', Array.isArray(r.v) ? '[]' : '{}') : valueEl(V, r.v, r.p[r.p.length - 1], r.p.length > 1 ? r.p[r.p.length - 2] : null, 'tree', r.p))
       b.appendChild(line)
     }
     card.append(top, b)
@@ -1432,14 +1647,142 @@ function viewer (doc, root, body, file) {
     }
   }
 
-  // --- keys anywhere in the pane: / focuses the search, Esc clears it
+  // --- JSON-LD: follow an @id in place, and a trail to come back along
+  const ldx = V.ldx
+  const here = ldx ? ldx.doc : docOf(uri)
+  const trail = [] // { view, segs | null, y, label, ref }
+  let ti = -1
+  const mark = (segs) => ({ view: V.view, segs: segs || null, y: win.scrollY || 0 })
+  const sameSpot = (a, b) => !!a && !!b && a.view === b.view && (a.segs && b.segs ? pkey(a.segs) === pkey(b.segs) : !a.segs && !b.segs && Math.abs(a.y - b.y) < 2)
+  function record (from, to) {
+    if (!sameSpot(trail[ti], from)) { trail.length = ti + 1; trail.push(from); ti++ }
+    trail.length = ti + 1
+    trail.push(to)
+    ti++
+    syncTrail()
+  }
+  function syncTrail () {
+    const e = trail[ti]
+    trailRow.hidden = !trail.length
+    backBtn.disabled = ti <= 0
+    fwdBtn.disabled = ti >= trail.length - 1
+    trailText.replaceChildren()
+    if (e) {
+      if (e.name) trailText.append(el(doc, 'b', null, e.name), ' · ' + e.label)
+      else trailText.append(e.view !== 'tree' ? 'Back in the ' + e.view + ' view' : e.segs ? 'Back at ' + pathOf(e.segs) : 'Back where you were')
+    }
+    stepBtn.hidden = !(e && e.ref && ldx.refs.get(e.ref).length > 1)
+    syncHeight()
+  }
+  let flashTimer = 0
+  function flash (item) {
+    const old = root.querySelector('.jv-flash')
+    if (old) old.classList.remove('jv-flash')
+    void item.offsetWidth // restart the animation on the same row
+    item.classList.add('jv-flash')
+    clearTimeout(flashTimer)
+    flashTimer = setTimeout(() => item.classList.remove('jv-flash'), 1800)
+  }
+  V.flash = flash
+  // Open the tree at segs: ancestors expanded, the row focused, in view and flashed
+  function goSegs (segs, open, quiet) {
+    if (V.state.mode === 'query') { q.value = ''; onInput(true) }
+    show('tree')
+    if (!quiet && trailRow.hidden) { trailRow.hidden = false; syncHeight() } // before scrolling: the toolbar is about to grow
+    let node = mainTree.reveal(segs)
+    if (!node && V.state.filter) { filterBtn.click(); node = mainTree.reveal(segs) } // the filter hid it
+    if (!node) return null
+    if (open) mainTree.open(node)
+    if (quiet) { mainTree.setActive(node.el); V.setCurrent(node) } else mainTree.focus(node.el)
+    node.el.firstChild.scrollIntoView({ block: open && node.branch ? 'start' : 'center' }) // a definition: its properties below it
+    flash(node.el)
+    return node
+  }
+  function trailGo (step) {
+    const e = trail[ti + step]
+    if (!e) return false
+    ti += step
+    if (e.view === 'tree' && e.segs) goSegs(e.segs, false)
+    else { show(e.view); win.scrollTo(0, e.y) }
+    syncTrail()
+    return true
+  }
+  // from: { segs } when the link sits in the main tree; anything else comes back by scroll position
+  V.ldGoto = (iri, from) => {
+    const defs = ldx && ldx.defs.get(iri)
+    if (!defs) return false
+    const origin = mark(from && from.segs)
+    const target = defs[0].segs.length ? defs[0].segs : defs[0].idSegs // a document that is one node: its @id row
+    if (!goSegs(target, true)) return false
+    const n = (ldx.refs.get(iri) || []).length
+    record(origin, { view: 'tree', segs: target, y: 0, name: shortIri(iri, here), label: 'defined here' + (n ? ', ' + plural(n, 'reference', 'references') : '') })
+    return true
+  }
+  // Step through the places that point to a node, one more each time
+  const stepAt = new Map()
+  V.ldStep = (iri, from) => {
+    const list = ldx && ldx.refs.get(iri)
+    if (!list || !list.length) return false
+    const origin = from && from.segs ? mark(from.segs) : trail[ti] || mark(null)
+    const i = ((stepAt.has(iri) ? stepAt.get(iri) : -1) + 1) % list.length
+    if (!goSegs(list[i], false)) return false
+    stepAt.set(iri, i)
+    record(origin, { view: 'tree', segs: list[i], y: 0, name: shortIri(iri, here), label: 'reference ' + fmt(i + 1) + ' of ' + fmt(list.length), ref: iri })
+    return true
+  }
+  // Linked documents fetched for "peek": one request a document, however often it is opened
+  const peeks = new Map()
+  V.peekDoc = (url) => {
+    let p = peeks.get(url)
+    if (!p) {
+      p = fetchPeek(V.host.fetch, url)
+      peeks.set(url, p)
+      p.then(r => { if (r.error) peeks.delete(url) }) // a failure may be tried again
+    }
+    return p
+  }
+  // The full URL of a link, shown when the keyboard lands on it (the mouse gets it as the title)
+  const tip = el(doc, 'div', 'jv-tip')
+  tip.hidden = true
+  tip.setAttribute('aria-hidden', 'true')
+  root.appendChild(tip)
+  let tipAt = 0
+  const hideTip = () => { tip.hidden = true }
+  root.addEventListener('focusin', e => {
+    const a = e.target
+    if (!a || !a.__jvIri || !a.classList.contains('jv-ref')) return
+    try { if (!a.matches(':focus-visible')) return } catch (err) {}
+    tip.textContent = a.__jvIri
+    tip.hidden = false
+    tipAt = performance.now()
+    const r = a.getBoundingClientRect()
+    const vw = doc.documentElement.clientWidth
+    tip.style.left = Math.max(8, Math.min(r.left, vw - tip.offsetWidth - 8)) + 'px'
+    const below = r.bottom + 6
+    tip.style.top = (below + tip.offsetHeight > (win.innerHeight || 800) ? Math.max(8, r.top - tip.offsetHeight - 6) : below) + 'px'
+  })
+  root.addEventListener('focusout', hideTip)
+  win.addEventListener('scroll', () => { if (performance.now() - tipAt > 250) hideTip() }, { passive: true }) // not the scroll that brought the link into view
+
+  // --- keys anywhere in the pane: / focuses the search, Esc clears it, Alt+Left / Alt+Right walk the trail
   const onKey = (e) => {
     if (!root.isConnected) { doc.removeEventListener('keydown', onKey); return }
     const t = (e.composedPath && e.composedPath()[0]) || e.target // inside a shadow root, the real target
     const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)
+    if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      // only when there is somewhere to go in the trail; otherwise the browser keeps its own Back
+      if (!typing && trail.length && (root.contains(t) || t === doc.body || t === doc.documentElement) && trailGo(e.key === 'ArrowLeft' ? -1 : 1)) e.preventDefault()
+      return
+    }
     if (e.key === '/' && !typing && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); q.focus(); q.select() } else if (e.key === 'Escape' && !typing && root.contains(t) && q.value) { q.value = ''; onInput(true) }
   }
   doc.addEventListener('keydown', onKey)
+
+  // Opened at a node's own URL (…/alex.jsonld#me): show that node
+  if (ldx && uri.includes('#')) {
+    const defs = ldx.defs.get(absUrl(uri, doc.baseURI) || uri)
+    if (defs && defs[0].segs.length) { show('tree'); goSegs(defs[0].segs, true, true) }
+  }
 
   show('tree')
   updateCount()
@@ -1475,11 +1818,12 @@ function hl (V, span, text) {
   return span
 }
 
-// key: the value's own key; parentKey: its array's key (so items of "@type": [...] are types too)
-function valueEl (V, v, key, parentKey, place) {
+// key: the value's own key; parentKey: its array's key (so items of "@type": [...] are types too);
+// segs: the value's path in its document, which says whether a string is an @id that can be followed
+function valueEl (V, v, key, parentKey, place, segs) {
   const doc = V.doc
   const t = typeOf(v)
-  if (t === 'string') return stringEl(V, v, key, parentKey, place)
+  if (t === 'string') return stringEl(V, v, key, parentKey, place, segs)
   const wrap = el(doc, 'span', 'jv-val')
   const s = hl(V, el(doc, 'span', 'jv-' + t), t === 'null' ? 'null' : String(v))
   wrap.appendChild(s)
@@ -1499,7 +1843,7 @@ function valueEl (V, v, key, parentKey, place) {
   return wrap
 }
 
-function stringEl (V, s, key, parentKey, place) {
+function stringEl (V, s, key, parentKey, place, segs) {
   const doc = V.doc
   const wrap = el(doc, 'span', 'jv-val jv-string')
   const ldKey = V.ld ? (typeof key === 'string' ? key : parentKey) : null
@@ -1509,10 +1853,13 @@ function stringEl (V, s, key, parentKey, place) {
     wrap.appendChild(b)
     return wrap
   }
+  const role = V.ld && V.ldx && segs ? V.ldx.role.get(pkey(segs)) : undefined
+  if (role) return idEl(V, s, role, place, segs)
   const limit = place === 'cell' ? LIMITS.cell : LIMITS.string
   let info = null
   if (ldKey === '@id') {
-    try { info = { kind: 'url', href: new URL(s, V.base).href, image: false, id: true } } catch (e) {}
+    const href = absUrl(s, V.base) // an @id the index does not cover (inside @context): a link only if it is http(s)
+    if (href && RE_HTTP.test(href)) info = { kind: 'url', href, image: false, id: true }
   }
   if (!info) info = classify(s, V.base)
   const q1 = el(doc, 'span', 'jv-quote', '"')
@@ -1556,6 +1903,145 @@ function stringEl (V, s, key, parentKey, place) {
     wrap.appendChild(c)
   }
   return wrap
+}
+
+// An @id that the index knows: the id of a node defined here, or a reference to a node.
+//   defined in this document  -> a link that jumps to the definition in the tree;
+//   another document (http)   -> a link the host opens in place, with "peek" beside it;
+//   anything else             -> plain text (other schemes are never navigated to).
+// Every link keeps a real href, so Ctrl / Cmd / middle click and "copy link" work as usual.
+function idEl (V, s, role, place, segs) {
+  const doc = V.doc
+  const main = V.main
+  const inMain = main === V
+  const mx = main.ldx
+  const wrap = el(doc, 'span', 'jv-val jv-string')
+  const iri = V.ldx.resolve(s)
+  const defined = !!(iri && mx && mx.defs.has(iri))
+  const isDef = role === 'def' && inMain && defined
+  const http = !!iri && RE_HTTP.test(iri)
+  const sameDoc = !!iri && !!mx && (docOf(iri) === mx.doc || docOf(iri) === docOf(mx.base))
+  wrap.appendChild(el(doc, 'span', 'jv-quote', '"'))
+  const plain = (e) => !e.defaultPrevented && !e.button && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey
+  const from = () => inMain && place !== 'cell' ? { segs } : null
+
+  if (!defined && !(http && !sameDoc)) { // nothing to follow
+    const t = hl(V, el(doc, 'span', 'jv-s jv-idtext'), s)
+    t.title = !iri ? '@id ' + s : sameDoc ? 'No node in this document has the @id ' + iri : '@id ' + iri
+    wrap.append(t, el(doc, 'span', 'jv-quote', '"'))
+    return wrap
+  }
+
+  const a = hl(V, el(doc, 'a', 'jv-link jv-ref ' + (isDef ? 'jv-self' : defined ? 'jv-local' : 'jv-xdoc')), s)
+  a.__jvIri = iri
+  if (http || /^file:/i.test(iri)) a.href = iri
+  else { // an id with no address (a blank node, a urn:) that is defined here: a link by role only
+    a.tabIndex = 0
+    a.setAttribute('role', 'link')
+    a.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); a.click() } })
+  }
+  wrap.append(a, el(doc, 'span', 'jv-quote', '"'))
+
+  if (isDef) {
+    const item = () => a.closest('.jv-item')
+    a.title = '@id ' + iri + ' · this node is defined here'
+    a.addEventListener('click', e => {
+      if (!plain(e)) return
+      e.preventDefault()
+      e.stopPropagation()
+      if (place === 'cell' || !item()) main.ldGoto(iri, null) // from the table: show the node in the tree
+      else main.flash(item())
+    })
+    if (place !== 'cell') {
+      const chip = el(doc, 'span', 'jv-chip jv-def')
+      chip.append(icon(doc, 'target', 12), el(doc, 'span', null, 'defined here'))
+      chip.title = 'This node is defined here: ' + iri
+      wrap.appendChild(chip)
+      const n = (mx.refs.get(iri) || []).length
+      if (n) {
+        const node = segs.length > 1 ? segs.slice(0, -1) : segs
+        const b = button(doc, 'jv-refs', 'link', plural(n, 'reference', 'references'), (n === 1 ? 'One place points' : fmt(n) + ' places point') + ' to this node. Click to go to ' + (n === 1 ? 'it' : 'the next one'),
+          e => { e.stopPropagation(); main.ldStep(iri, { segs: node }) })
+        wrap.appendChild(b)
+      }
+    }
+    return wrap
+  }
+
+  if (defined) {
+    a.title = '@id ' + iri + ' · defined in this document: click to jump to it'
+    a.addEventListener('click', e => {
+      if (!plain(e)) return
+      e.preventDefault()
+      e.stopPropagation()
+      main.ldGoto(iri, from())
+    })
+    return wrap
+  }
+
+  a.title = '@id ' + iri + ' · another document: click to open it here, Ctrl-click for a new tab'
+  a.addEventListener('click', e => {
+    if (!plain(e)) return
+    e.stopPropagation()
+    if (main.host.go(iri)) e.preventDefault() // otherwise the href is followed, in this tab
+  })
+  if (main.host.peek && main.host.fetch && place === 'tree' && role === 'ref') wrap.appendChild(peekButton(V, iri, s, wrap))
+  return wrap
+}
+
+// "peek": fetch the other document (on this click, never before) and show the node under the link
+function peekButton (V, iri, s, wrap) {
+  const doc = V.doc
+  const main = V.main
+  const url = docOf(iri)
+  const b = button(doc, 'jv-peek', 'eye', 'peek', 'Peek: fetch ' + url + ' and show this node here')
+  b.setAttribute('aria-expanded', 'false')
+  let box = null
+  const close = () => { if (box) box.remove(); box = null; b.setAttribute('aria-expanded', 'false') }
+  b.addEventListener('click', e => {
+    e.stopPropagation()
+    if (box) return close()
+    box = el(doc, 'div', 'jv-peekbox')
+    box.setAttribute('role', 'group')
+    box.setAttribute('aria-label', 'Peek at ' + iri)
+    const head = el(doc, 'div', 'jv-peekhead')
+    const src = el(doc, 'a', 'jv-peeksrc', shortIri(url, ''))
+    src.href = url
+    src.target = '_blank'
+    src.rel = 'noopener noreferrer'
+    src.title = url + ' (opens in a new tab)'
+    const what = el(doc, 'span', 'jv-peekwhat', 'fetching…')
+    what.setAttribute('aria-live', 'polite')
+    head.append(el(doc, 'span', null, 'from'), src, what, button(doc, 'jv-pclose', 'close', 'close', 'Close the peek', ev => { ev.stopPropagation(); close(); b.focus() }))
+    const body = el(doc, 'div', 'jv-peekbody')
+    body.appendChild(el(doc, 'div', 'jv-peekmsg', 'Fetching ' + url + ' …'))
+    box.append(head, body)
+    ;(b.closest('.jv-item') || b.closest('.jv-res-body') || wrap.parentNode).appendChild(box)
+    b.setAttribute('aria-expanded', 'true')
+    const mine = box
+    main.peekDoc(url).then(r => {
+      if (box !== mine) return // closed meanwhile
+      if (r.error) {
+        box.classList.add('jv-peekbad')
+        what.textContent = ''
+        body.replaceChildren(el(doc, 'div', 'jv-peekmsg', r.error))
+        body.firstChild.setAttribute('role', 'alert')
+        return
+      }
+      const defs = r.ldx.defs.get(iri)
+      const at = defs ? defs[0].segs : []
+      what.textContent = defs ? '· node ' + shortIri(iri, url) : iri === url ? '· the whole document' : '· no node there has this @id: the whole document'
+      // the other document's own state: its ids resolve against its URL, its paths are its own
+      const PV = Object.create(main)
+      PV.base = url
+      PV.ld = true
+      PV.ldx = r.ldx
+      PV.setCurrent = () => {}
+      PV.showInTree = () => main.toast('That value is in the other document')
+      body.replaceChildren(makeTree(PV, getAt(r.data, at), at, { label: 'Peek at ' + iri, autoRows: 30, mini: true }).el)
+    })
+  })
+  return b
 }
 
 // A small button beside an image link: hover shows a floating preview, a click opens it inline.
@@ -1710,10 +2196,15 @@ function makeTree (V, value, segs, opts) {
         if (n === 0) line.appendChild(el(doc, 'span', 'jv-empty', Array.isArray(v) ? '[ ]' : '{ }'))
         else {
           line.appendChild(el(doc, 'span', 'jv-count-chip', countLabel(v, n)))
-          line.appendChild(el(doc, 'span', 'jv-prev', previewText(v)))
+          const rk = n === 1 && V.ld ? soleRef(V, v, node.segs) : null
+          if (rk !== null) { // only a reference: the link itself, while the row is closed
+            const p = el(doc, 'span', 'jv-refprev', '→ ')
+            p.appendChild(idEl(V, v[rk], 'ref', 'prev', node.segs.concat([rk])))
+            line.appendChild(p)
+          } else line.appendChild(el(doc, 'span', 'jv-prev', previewText(v)))
         }
       } else {
-        line.appendChild(valueEl(V, v, node.key, node.owner && typeof node.owner.key === 'string' ? node.owner.key : null, 'tree'))
+        line.appendChild(valueEl(V, v, node.key, node.owner && typeof node.owner.key === 'string' ? node.owner.key : null, 'tree', node.segs))
       }
       // row actions: copy value, copy path, and a table for arrays of objects
       const acts = el(doc, 'div', 'jv-acts')
@@ -1845,6 +2336,10 @@ function makeTree (V, value, segs, opts) {
     return null
   }
 
+  T.open = (node) => { expand(node) }
+  // A peeked document is a tree inside this one: its rows are its own
+  const owns = (item) => !!item && item.closest('.jv-tree') === tree
+
   T.expandAll = (budget) => {
     let rows = tree.querySelectorAll('.jv-item').length
     const queue = T.root.children.slice()
@@ -1897,13 +2392,13 @@ function makeTree (V, value, segs, opts) {
   }
   tree.addEventListener('focusin', e => {
     const item = e.target.closest && e.target.closest('.jv-item')
-    if (item === e.target && tree.contains(item)) { setActive(item); V.setCurrent(item.__jv) }
+    if (item === e.target && owns(item)) { setActive(item); V.setCurrent(item.__jv) }
   })
   tree.addEventListener('click', e => {
     const t = e.target
     if (t.closest('a, button, .jv-inline-table, .jv-ithumb')) return
     const item = t.closest('.jv-item')
-    if (!item || !tree.contains(item)) return
+    if (!owns(item)) return
     const sel = doc.getSelection && doc.getSelection()
     if (sel && !sel.isCollapsed && item.contains(sel.anchorNode)) return // selecting text, not clicking
     T.focus(item)
@@ -1911,7 +2406,7 @@ function makeTree (V, value, segs, opts) {
   })
   tree.addEventListener('keydown', e => {
     const item = e.target
-    if (!item.__jv || e.altKey || e.metaKey) return
+    if (!item.__jv || e.altKey || e.metaKey || !owns(item)) return
     const node = item.__jv
     let next = null
     switch (e.key) {
@@ -1928,7 +2423,12 @@ function makeTree (V, value, segs, opts) {
         break
       case 'Home': next = T.firstItem(); break
       case 'End': next = tree.lastElementChild && tree.lastElementChild.__jv ? lastVisible(tree.lastElementChild) : null; break
-      case 'Enter': case ' ': if (node.branch) toggle(node); break
+      case 'Enter': case ' ': {
+        const ref = e.key === 'Enter' && !node.branch ? item.querySelector(':scope > .jv-row a.jv-ref') : null
+        if (ref) ref.click() // a row that is a reference: follow it
+        else if (node.branch) toggle(node)
+        break
+      }
       case 'c': case 'C':
         if (!(e.ctrlKey || e.metaKey)) return
         if (String(doc.getSelection && doc.getSelection()).length) return
@@ -2060,7 +2560,11 @@ function makeTable (V, arr, segs) {
       for (const c of columns) {
         const v = cell(r, c)
         const td = el(doc, 'td')
-        if (v === undefined) { td.className = 'jv-missing'; td.textContent = '—' } else if (isBranch(v)) {
+        const at = segs.concat(c === VALUE ? [i] : [i, c])
+        const rk = v !== undefined && V.ld ? soleRef(V, v, at) : null
+        if (v === undefined) { td.className = 'jv-missing'; td.textContent = '—' } else if (rk !== null) {
+          td.appendChild(idEl(V, v[rk], 'ref', 'cell', at.concat([rk]))) // {"@id": …}: the link itself
+        } else if (isBranch(v)) {
           const n = Array.isArray(v) ? v.length : Object.keys(v).length
           const b = el(doc, 'button', 'jv-nest', (Array.isArray(v) ? '[ ' : '{ ') + countLabel(v, n) + (Array.isArray(v) ? ' ]' : ' }'))
           b.type = 'button'
@@ -2069,7 +2573,7 @@ function makeTable (V, arr, segs) {
           td.appendChild(b)
         } else {
           if (typeof v === 'string' && v.length > 48) td.className = 'jv-wrap'
-          td.appendChild(valueEl(V, v, c === VALUE ? i : c, null, 'cell'))
+          td.appendChild(valueEl(V, v, c === VALUE ? i : c, null, 'cell', at))
         }
         tr.appendChild(td)
       }

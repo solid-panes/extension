@@ -60,6 +60,8 @@
       shadow: true, // styles as a constructed sheet inside a shadow root: page CSP cannot block them
       source: { text, contentType: type, url: location.href },
       imagePreviews: false, // no picture loads, even on hover: the extension makes no requests
+      peek: false, // no "peek" at a linked document: that would be a request
+      navigate: url => location.assign(url), // a link to another document: the browser goes there, as for any link
       session: { store: null }
     }
     const view = pane.render({ uri: location.href, doc () { return this } }, context)
